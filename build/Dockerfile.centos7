@@ -52,6 +52,7 @@ RUN set -eux; \
     bash /build/build-pty.sh; \
     bash /build/build-bfs.sh; \
     bash /build/build-ugrep.sh; \
+    install -m 0755 "$NODE_DIR/bin/node" /output/artifacts/node; \
     ls -l /output/artifacts
 
 # Assert the symbol ceilings again, from inside the build, so a bad artifact fails the build.
