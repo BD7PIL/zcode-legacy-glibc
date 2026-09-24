@@ -1,0 +1,68 @@
+# Build a glibc-2.17 compatible ZCode remote runtime bundle.
+#
+# CentOS 7 is the build target on purpose: its glibc is 2.17 and its libstdc++ tops out at
+# GLIBCXX_3.4.19, which is exactly the ceiling we need. Everything is compiled inside this
+# container, so no artifact can pick up symbols newer than the target allows.
+#
+# Build:  docker build -f build/Dockerfile.centos7 -o dist .
+# (or via the "Build legacy runtime bundle" GitHub Action)
+
+FROM centos:7 AS builder
+
+# CentOS 7 is EOL - point yum at the vault and write the SCLo repo by hand (centos-release-scl
+# would try to refresh dead mirrorlists).
+RUN sed -i 's|^mirrorlist=|#mirrorlist=|g; s|^#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*.repo \
+ && printf '%s\n' \
+      '[centos-sclo-rh]' \
+      'name=CentOS-7 - SCLo rh' \
+      'baseurl=http://vault.centos.org/7.9.2009/sclo/x86_64/rh/' \
+      'gpgcheck=0' \
+      'enabled=1' \
+      > /etc/yum.repos.d/CentOS-SCLo.repo \
+ && yum install -y \
+      devtoolset-11-gcc devtoolset-11-gcc-c++ devtoolset-11-make \
+      autoconf automake libtool pkg-config flex bison \
+      git curl xz file binutils python3 \
+ && yum clean all
+
+ARG ZCODE_VERSION=3.14.3
+ARG NODE_VERSION=22.16.0
+ARG NODE_PTY_VERSION=1.2.0-beta.10
+ARG BFS_VERSION=4.1.1
+ARG UGREP_VERSION=7.8.4
+ARG PCRE2_VERSION=10.44
+
+ENV ZCL_DEPS_DIR=/deps \
+    NODE_VERSION=${NODE_VERSION} \
+    NODE_PTY_VERSION=${NODE_PTY_VERSION} \
+    BFS_VERSION=${BFS_VERSION} \
+    UGREP_VERSION=${UGREP_VERSION} \
+    PCRE2_VERSION=${PCRE2_VERSION} \
+    ZCL_ZCODE_VERSION=${ZCODE_VERSION} \
+    OUT_DIR=/output/artifacts
+
+COPY build/ /build/
+
+RUN set -eux; \
+    mkdir -p /output/artifacts; \
+    NODE_DIR="$(bash /build/fetch-node.sh)"; \
+    echo "node dir: $NODE_DIR"; \
+    export NODE_DIR; \
+    bash /build/build-pty.sh; \
+    bash /build/build-bfs.sh; \
+    bash /build/build-ugrep.sh; \
+    ls -l /output/artifacts
+
+# Assert the symbol ceilings again, from inside the build, so a bad artifact fails the build.
+RUN set -eux; \
+    for f in /output/artifacts/node /output/artifacts/pty.node /output/artifacts/bfs /output/artifacts/ugrep; do \
+      max="$(objdump -T "$f" | grep -oE 'GLIBC_2\.[0-9]+(\.[0-9]+)?' | sort -Vu | tail -n1)"; \
+      echo "$f max glibc: $max"; \
+      [ "$(printf '%s\n2.17\n' "${max#GLIBC_}" | sort -V | tail -n1)" = "2.17" ]; \
+    done; \
+    refs="$(objdump -T /output/artifacts/pty.node | grep -cE 'GLIBCXX_|CXXABI_' || true)"; \
+    echo "pty.node libstdc++ refs: $refs"; \
+    [ "$refs" -eq 0 ]
+
+FROM scratch
+COPY --from=builder /output/ /

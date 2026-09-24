@@ -1,0 +1,124 @@
+name: Build legacy runtime bundle
+
+# Manual trigger only - nothing runs on a schedule. Run this when ZCode bumps the component
+# versions in its asset manifest (node-runtime / node-pty / bfs / ugrep), or when you want a
+# fresh, reproducible bundle built inside a centos:7 container.
+
+on:
+  workflow_dispatch:
+    inputs:
+      zcode_version:
+        description: ZCode desktop version this bundle is for
+        required: true
+        default: "3.14.3"
+      node_version:
+        description: node-runtime version the manifest declares (without leading v)
+        required: true
+        default: "22.16.0"
+      node_pty_version:
+        description: node-pty version the manifest declares (without leading v)
+        required: true
+        default: "1.2.0-beta.10"
+      bfs_version:
+        description: upstream bfs version to build
+        required: true
+        default: "4.1.1"
+      ugrep_version:
+        description: upstream ugrep version to build
+        required: true
+        default: "7.8.4"
+      pcre2_version:
+        description: PCRE2 version linked into ugrep
+        required: true
+        default: "10.44"
+      create_release:
+        description: Publish a GitHub release with the bundle
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build artifacts in centos:7
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: build/Dockerfile.centos7
+          outputs: type=local,dest=artifacts
+          build-args: |
+            ZCODE_VERSION=${{ inputs.zcode_version }}
+            NODE_VERSION=${{ inputs.node_version }}
+            NODE_PTY_VERSION=${{ inputs.node_pty_version }}
+            BFS_VERSION=${{ inputs.bfs_version }}
+            UGREP_VERSION=${{ inputs.ugrep_version }}
+            PCRE2_VERSION=${{ inputs.pcre2_version }}
+
+      - name: Show artifact tree
+        run: find artifacts -type f | sort
+
+      - name: Package bundle
+        env:
+          NODE_VERSION: v${{ inputs.node_version }}
+          NODE_PTY_VERSION: v${{ inputs.node_pty_version }}
+          BFS_VERSION: v${{ inputs.bfs_version }}-2
+          UGREP_VERSION: v${{ inputs.ugrep_version }}-1
+          ZCL_ZCODE_VERSION: ${{ inputs.zcode_version }}
+        run: |
+          set -euo pipefail
+          bash build/package.sh --from-artifacts artifacts/artifacts --out dist
+          ls -l dist
+
+      - name: Assert symbol ceilings on the packed bundle
+        run: |
+          set -euo pipefail
+          tar tzf dist/*.tar.gz >/dev/null
+          mkdir -p unpack && tar xzf dist/*.tar.gz -C unpack
+          for f in unpack/node unpack/pty.node unpack/bfs unpack/ugrep; do
+            max="$(objdump -T "$f" | grep -oE 'GLIBC_2\.[0-9]+(\.[0-9]+)?' | sort -Vu | tail -n1)"
+            echo "$f -> $max"
+            test "$(printf '%s\n2.17\n' "${max#GLIBC_}" | sort -V | tail -n1)" = "2.17"
+          done
+          refs="$(objdump -T unpack/pty.node | grep -cE 'GLIBCXX_|CXXABI_' || true)"
+          echo "pty.node libstdc++ refs: $refs"
+          test "$refs" -eq 0
+
+      - name: Upload bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zcode-legacy-glibc-bundle
+          path: dist/*
+          retention-days: 7
+
+      - name: Publish release
+        if: ${{ inputs.create_release }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.zcode_version }}-${{ inputs.node_version }}
+          name: ZCode ${{ inputs.zcode_version }} / node v${{ inputs.node_version }} legacy runtime
+          body: |
+            glibc-2.17 compatible replacements for the ZCode remote runtime.
+
+            | component | ZCode version | upstream |
+            | --- | --- | --- |
+            | node-runtime | v${{ inputs.node_version }} | Node.js ${{ inputs.node_version }} (glibc-217 build) |
+            | node-pty | v${{ inputs.node_pty_version }} | node-pty ${{ inputs.node_pty_version }} rebuilt |
+            | bfs | v${{ inputs.bfs_version }}-2 | bfs ${{ inputs.bfs_version }} |
+            | ugrep | v${{ inputs.ugrep_version }}-1 | ugrep ${{ inputs.ugrep_version }} + PCRE2 ${{ inputs.pcre2_version }} |
+
+            Apply with:
+
+            ```bash
+            ~/.zcode/legacy-glibc/scripts/apply.sh --bundle zcode-legacy-glibc-<tag>.tar.gz
+            ~/.zcode/legacy-glibc/scripts/verify.sh
+            ```
+          files: |
+            dist/*.tar.gz
+            dist/*.sha256
