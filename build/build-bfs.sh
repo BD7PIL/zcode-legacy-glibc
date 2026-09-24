@@ -12,7 +12,7 @@ BFS_VERSION="${BFS_VERSION:-4.1.1}"
 OUT_DIR="${OUT_DIR:-$(pwd)/out-bfs}"
 WORK_DIR="${WORK_DIR:-$(mktemp -d)}"
 
-log() { echo "  [INFO]  $*"; }
+log() { echo "  [INFO]  $*" >&2; }
 die() { echo "  [ERROR] $*" >&2; exit 1; }
 
 if [ -z "${CC:-}" ] && [ -x /opt/rh/devtoolset-11/root/usr/bin/gcc ]; then

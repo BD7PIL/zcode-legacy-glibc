@@ -45,8 +45,9 @@ COPY build/ /build/
 
 RUN set -eux; \
     mkdir -p /output/artifacts; \
-    NODE_DIR="$(bash /build/fetch-node.sh)"; \
+    NODE_DIR="$(bash /build/fetch-node.sh | tail -n1)"; \
     echo "node dir: $NODE_DIR"; \
+    test -x "$NODE_DIR/bin/node"; \
     export NODE_DIR; \
     bash /build/build-pty.sh; \
     bash /build/build-bfs.sh; \

@@ -21,7 +21,7 @@ NODE_DIR="${NODE_DIR:-}"
 OUT_DIR="${OUT_DIR:-$(pwd)/out-pty}"
 WORK_DIR="${WORK_DIR:-$(mktemp -d)}"
 
-log() { echo "  [INFO]  $*"; }
+log() { echo "  [INFO]  $*" >&2; }
 die() { echo "  [ERROR] $*" >&2; exit 1; }
 
 [ -n "$NODE_DIR" ] && [ -x "$NODE_DIR/bin/node" ] || die "NODE_DIR must point at an extracted node (see fetch-node.sh)"

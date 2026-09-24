@@ -15,7 +15,7 @@ DEPS_DIR="${ZCL_DEPS_DIR:-$HOME/.zcode/legacy-glibc/build-deps}"
 BASE_URL="https://unofficial-builds.nodejs.org/download/release/v${NODE_VERSION}"
 ARCHIVE="node-v${NODE_VERSION}-linux-x64-glibc-217.tar.gz"
 
-log() { echo "  [INFO]  $*"; }
+log() { echo "  [INFO]  $*" >&2; }
 die() { echo "  [ERROR] $*" >&2; exit 1; }
 
 mkdir -p "$DEPS_DIR"

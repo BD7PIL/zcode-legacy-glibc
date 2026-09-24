@@ -22,7 +22,7 @@ OUT_DIR="${OUT_DIR:-$(pwd)/out-ugrep}"
 WORK_DIR="${WORK_DIR:-$(mktemp -d)}"
 UGREP_SIMD="${UGREP_SIMD:-}"
 
-log() { echo "  [INFO]  $*"; }
+log() { echo "  [INFO]  $*" >&2; }
 die() { echo "  [ERROR] $*" >&2; exit 1; }
 
 if [ -z "${CC:-}" ] && [ -x /opt/rh/devtoolset-11/root/usr/bin/gcc ]; then

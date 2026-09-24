@@ -122,3 +122,29 @@ jobs:
           files: |
             dist/*.tar.gz
             dist/*.sha256
+
+
+  cleanup:
+    runs-on: ubuntu-latest
+    needs: build
+    if: ${{ always() }}
+    steps:
+      - name: Prune old workflow runs (keep the newest KEEP_N, delete their artifacts)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEEP_N: '20'
+        run: |
+          set -euo pipefail
+          workflow_id=$(gh api "repos/${{ github.repository }}/actions/workflows/build.yml" --jq '.id')
+          gh api --paginate "repos/${{ github.repository }}/actions/workflows/${workflow_id}/runs?per_page=100" --jq '.workflow_runs[].id' | tail -n +$((KEEP_N+1)) > old_runs.txt
+          count=$(wc -l < old_runs.txt || true)
+          echo "runs beyond the newest ${KEEP_N}: ${count}"
+          while read -r run_id; do
+            [ -n "$run_id" ] || continue
+            echo "pruning artifacts of run ${run_id}"
+            gh api --paginate "repos/${{ github.repository }}/actions/runs/${run_id}/artifacts?per_page=100" --jq '.artifacts[].id' | while read -r art_id; do
+                [ -n "$art_id" ] || continue
+                gh api -X DELETE "repos/${{ github.repository }}/actions/artifacts/${art_id}" || true
+            done
+          done < old_runs.txt
+          rm -f old_runs.txt
