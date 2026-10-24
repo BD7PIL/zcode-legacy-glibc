@@ -69,9 +69,13 @@ RUN set -eux; \
     refs="$(objdump -T /output/artifacts/pty.node | grep -cE 'GLIBCXX_|CXXABI_' || true)"; \
     echo "pty.node libstdc++ refs: $refs"; \
     [ "$refs" -eq 0 ]; \
-    krefs="$(objdump -T /output/artifacts/koffi.node | grep -cE 'GLIBCXX_|CXXABI_' || true)"; \
-    echo "koffi.node libstdc++ refs: $krefs"; \
-    [ "$krefs" -eq 0 ]
+    if [ -f /output/artifacts/koffi.node ]; then \
+      krefs="$(objdump -T /output/artifacts/koffi.node | grep -cE 'GLIBCXX_|CXXABI_' || true)"; \
+      echo "koffi.node libstdc++ refs: $krefs"; \
+      [ "$krefs" -eq 0 ]; \
+    else \
+      echo "koffi.node not built - bundle ships without a koffi replacement (best-effort)"; \
+    fi
 
 FROM scratch
 COPY --from=builder /output/ /

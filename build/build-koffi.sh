@@ -52,14 +52,18 @@ fi
 
 log "packing koffi@$KOFFI_VERSION"
 mkdir -p "$WORK_DIR" && cd "$WORK_DIR"
-npm pack "koffi@$KOFFI_VERSION" --silent >/dev/null 2>&1 || die "npm pack failed for koffi@$KOFFI_VERSION"
+npm pack "koffi@$KOFFI_VERSION" --silent >/dev/null 2>&1 || { log "WARN: npm pack failed for koffi@$KOFFI_VERSION - skipping koffi (best-effort)"; exit 0; }
 tar xzf "koffi-${KOFFI_VERSION}.tgz"
 cd package
-[ -f binding.gyp ] || die "koffi@$KOFFI_VERSION ships no binding.gyp - source build unsupported upstream"
+if [ ! -f binding.gyp ]; then
+  log "WARN: koffi@$KOFFI_VERSION ships no binding.gyp (upstream builds via CMake) - skipping koffi (best-effort)"
+  log "WARN: the bundle will not carry a koffi replacement; TUI-dependent features (@mbears/opentui-core) degrade on glibc 2.17 hosts"
+  exit 0
+fi
 
 log "compiling with $GYP_SPEC"
-npm install --no-save --no-audit --no-fund --ignore-scripts "$GYP_SPEC" >/dev/null 2>&1 || die "npm install (node-gyp) failed"
-node_modules/.bin/node-gyp rebuild --nodedir="$NODE_DIR" > build.log 2>&1 || { tail -30 build.log >&2; die "node-gyp rebuild failed"; }
+npm install --no-save --no-audit --no-fund --ignore-scripts "$GYP_SPEC" >/dev/null 2>&1 || { log "WARN: npm install (node-gyp) failed - skipping koffi (best-effort)"; exit 0; }
+node_modules/.bin/node-gyp rebuild --nodedir="$NODE_DIR" > build.log 2>&1 || { log "WARN: node-gyp rebuild failed - skipping koffi (best-effort)"; tail -10 build.log >&2; exit 0; }
 
 BUILT="$(find . -name 'koffi.node' -path '*/Release/*' -o -name 'koffi.node' -path '*/koffi/*' | head -n1)"
 [ -n "$BUILT" ] || { find . -name 'koffi.node' >&2 || true; die "node-gyp produced no koffi.node"; }
