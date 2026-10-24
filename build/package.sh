@@ -119,7 +119,9 @@ log "writing manifest"
 } > "$STAGE/manifest.json"
 
 log "writing SHA256SUMS"
-( cd "$STAGE" && { sha256sum node pty.node bfs ugrep manifest.json; [ -f koffi.node ] && sha256sum koffi.node; } > SHA256SUMS )
+sums=(node pty.node bfs ugrep manifest.json)
+[ -f "$STAGE/koffi.node" ] && sums+=(koffi.node)
+( cd "$STAGE" && sha256sum "${sums[@]}" > SHA256SUMS )
 
 log "creating $TARBALL"
 tar czf "$TARBALL" -C "$STAGE" .
