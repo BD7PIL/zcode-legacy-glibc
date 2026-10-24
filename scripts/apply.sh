@@ -149,7 +149,7 @@ if [ "$LAYOUT" = "new" ]; then
 
   gate "zcode-server" "$TREE_VERSION" "$BUNDLE_ZCODE" "(the desktop reinstalled a different release - rebuild the bundle for it)"
   gate "node-runtime" "${TREE_NODE#v}" "${BUNDLE_NODE#v}" "(rebuild with the node version current.json declares)"
-  gate "node-pty"     "$TREE_PTY" "$(manifest_field node-pty version)" "(ABI risk - rebuild node-pty for this version, or pass --force)"
+  gate "node-pty"     "$(upstream_ver "$TREE_PTY")" "$(upstream_ver "$(manifest_field node-pty version)")" "(ABI risk - rebuild node-pty for this version, or pass --force)"
 
   # per-tool versions live in SOURCES.json keyed by toolId (the file lists all three tools)
   for comp in bfs ugrep; do
