@@ -16,6 +16,7 @@ FAILED=0
 
 log()  { echo "  [INFO]  $*"; }
 ok()   { echo "  [ OK ]  $*"; }
+warn() { echo "  [WARN]  $*"; }
 bad()  { echo "  [FAIL]  $*"; FAILED=1; }
 
 # Compare dotted versions: version_le A B -> true when A <= B
