@@ -61,7 +61,7 @@ jobs:
       ugrep_version: ${{ steps.versions.outputs.ugrep }}
       pcre2_version: ${{ steps.versions.outputs.pcre2 }}
       tag: ${{ steps.versions.outputs.tag }}
-      skip: ${{ steps.check.outputs.skip }}
+      skip: ${{ steps.versions.outputs.skip || steps.check.outputs.skip }}
     steps:
       - uses: actions/checkout@v4
         with:
