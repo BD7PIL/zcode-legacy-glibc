@@ -103,8 +103,8 @@ jv() {  # tar-member key -> first string value
 NEW_NODE="$(jv zcode-server-linux-x64/manifest.json nodeVersion)"
 NEW_NODE_PTY="$(jv zcode-server-linux-x64/runtime/node_modules/node-pty/package.json version)"
 NEW_KOFFI="$(jv zcode-server-linux-x64/runtime/node_modules/koffi/package.json version)"
-NEW_BFS="$(jv zcode-server-linux-x64/runtime/tools/bfs/SOURCES.json version)"
-NEW_UGREP="$(jv zcode-server-linux-x64/runtime/tools/ugrep/SOURCES.json version)"
+NEW_BFS="$(tar -xzOf "$ARCHIVE" zcode-server-linux-x64/runtime/tools/bfs/SOURCES.json 2>/dev/null | tool_version - bfs)"
+NEW_UGREP="$(tar -xzOf "$ARCHIVE" zcode-server-linux-x64/runtime/tools/ugrep/SOURCES.json 2>/dev/null | tool_version - ugrep)"
 
 [ -n "$NEW_NODE" ] || die "no nodeVersion in $NEWEST manifest"
 for kv in NEW_NODE_PTY NEW_KOFFI NEW_BFS NEW_UGREP; do

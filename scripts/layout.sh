@@ -58,3 +58,18 @@ component_path() {
 json_field() {
   sed -n 's/.*"'"$2"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" 2>/dev/null | head -n1
 }
+
+# tool_version <SOURCES.json|-> <toolId> -> version of that tool inside the native-search-tools
+# manifest (the file lists all three tools, so "first version field" is wrong - key on toolId).
+# "-" reads the manifest from stdin.
+tool_version() {
+  local src="$1" id="$2"
+  if [ "$src" = "-" ]; then
+    tr -d '\n' | grep -oE '"toolId"[[:space:]]*:[[:space:]]*"'"$id"'",[^}]*?"version"[[:space:]]*:[[:space:]]*"[^"]*"' \
+      | head -n1 | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
+  else
+    tr -d '\n' < "$src" 2>/dev/null \
+      | grep -oE '"toolId"[[:space:]]*:[[:space:]]*"'"$id"'",[^}]*?"version"[[:space:]]*:[[:space:]]*"[^"]*"' \
+      | head -n1 | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
+  fi
+}

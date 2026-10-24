@@ -151,9 +151,9 @@ if [ "$LAYOUT" = "new" ]; then
   gate "node-runtime" "${TREE_NODE#v}" "${BUNDLE_NODE#v}" "(rebuild with the node version current.json declares)"
   gate "node-pty"     "$TREE_PTY" "$(manifest_field node-pty version)" "(ABI risk - rebuild node-pty for this version, or pass --force)"
 
-  # per-tool versions live in SOURCES.json next to the binary
+  # per-tool versions live in SOURCES.json keyed by toolId (the file lists all three tools)
   for comp in bfs ugrep; do
-    tree_v="$(json_field "$RD/runtime/tools/$comp/SOURCES.json" version 2>/dev/null || true)"
+    tree_v="$(tool_version "$RD/runtime/tools/$comp/SOURCES.json" "$comp")"
     bundle_v="$(upstream_ver "$(manifest_field "$comp" version)")"
     gate "$comp" "$tree_v" "$bundle_v" "(rebuild $comp $tree_v, or pass --force)"
   done
