@@ -1,13 +1,13 @@
 name: Build legacy runtime bundle
 
-# One workflow, octg-style: an hourly detect job reads the upstream truth (the ZCode source-server
+# One workflow, octg-style: a 6-hourly detect job reads the upstream truth (the ZCode source-server
 # release CDN - there is no "latest" endpoint, so it probes forward from the newest version this
 # repo has built), and a Release tag is the build identity: if the tag exists, the whole chain
 # skips. Manual dispatch pins the versions explicitly and bypasses discovery.
 
 on:
   schedule:
-    - cron: '23 * * * *' # hourly - probes ~90 CDN paths, then skips if nothing new
+    - cron: '23 */6 * * *' # every 6h - probes ~90 CDN paths, then skips if nothing new
   workflow_dispatch:
     inputs:
       zcode_version:
