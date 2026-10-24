@@ -30,7 +30,7 @@ max_symbol() {  # file pattern
 check_binary() {  # id path
   local id="$1" path="$2"
   [ -f "$path" ] || { bad "$id: missing $path"; return; }
-  [ -x "$path" ] || { bad "$id: not executable: $path"; return; }
+  [ -r "$path" ] || { bad "$id: not readable: $path"; return; }
 
   local glibc glibcxx
   glibc="$(max_symbol "$path" 'GLIBC_2\.[0-9]+(\.[0-9]+)?')"
@@ -86,15 +86,15 @@ if [ -x "$NODE" ]; then
     sv="$(timeout 60 "$RUNTIME_ROOT/bin/zcode" --version 2>/dev/null | tr -d '\r\n' || true)"
     [ -n "$sv" ] && ok "bin/zcode --version -> $sv" || bad "bin/zcode failed to run"
     rt_dir="$(dirname "$NODE")"
-    kv="$(cd "$rt_dir" && timeout 30 "$NODE" -e 'try{console.log("koffi "+require("koffi/package.json").version)}catch(e){console.log("KOFFI_UNAVAILABLE")}' 2>/dev/null | tr -d '\r\n' || true)"
-    if [ "$kv" = "KOFFI_UNAVAILABLE" ]; then
+    kv="$(cd "$rt_dir" && timeout 30 "$NODE" -e 'try{require("koffi");console.log("koffi "+require("koffi/package.json").version+" loads")}catch(e){console.log("KOFFI_UNAVAILABLE: "+String(e.message).split("\n")[0])}' 2>/dev/null | tr -d '\r\n' || true)"
+    if [[ "$kv" == KOFFI_UNAVAILABLE* ]]; then
       if [ -f "$KOFFI$BACKUP_SUFFIX" ]; then
-        bad "koffi cannot be loaded (replacement broken)"
+        bad "koffi cannot be loaded (replacement broken): ${kv#KOFFI_UNAVAILABLE: }"
       else
         warn "koffi unavailable (official build needs glibc 2.28) - TUI-dependent features may degrade"
       fi
     elif [ -n "$kv" ]; then
-      ok "$kv loads"
+      ok "$kv"
     fi
   else
     sb="$RUNTIME_ROOT/zcode-server.cjs"
