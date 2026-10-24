@@ -1,38 +1,45 @@
 name: Build legacy runtime bundle
 
-# Manual trigger only - nothing runs on a schedule. Run this when ZCode bumps the component
-# versions in its asset manifest (node-runtime / node-pty / bfs / ugrep), or when you want a
-# fresh, reproducible bundle built inside a centos:7 container.
+# One workflow, octg-style: an hourly detect job reads the upstream truth (the ZCode source-server
+# release CDN - there is no "latest" endpoint, so it probes forward from the newest version this
+# repo has built), and a Release tag is the build identity: if the tag exists, the whole chain
+# skips. Manual dispatch pins the versions explicitly and bypasses discovery.
 
 on:
+  schedule:
+    - cron: '23 * * * *' # hourly - probes ~90 CDN paths, then skips if nothing new
   workflow_dispatch:
     inputs:
       zcode_version:
-        description: ZCode desktop version this bundle is for
-        required: true
-        default: "3.14.3"
+        description: 'ZCode desktop / source-server version (e.g. 3.16.3) - set to bypass discovery'
+        required: false
+        default: '3.16.3'
       node_version:
-        description: node-runtime version the manifest declares (without leading v)
-        required: true
-        default: "22.16.0"
+        description: 'node-runtime version the release manifest declares (without leading v)'
+        required: false
+        default: '22.16.0'
       node_pty_version:
-        description: node-pty version the manifest declares (without leading v)
-        required: true
-        default: "1.2.0-beta.10"
+        description: 'node-pty version the runtime bundles (without leading v)'
+        required: false
+        default: '1.1.0'
+      koffi_version:
+        description: 'koffi version the runtime bundles (without leading v)'
+        required: false
+        default: '2.15.6'
       bfs_version:
-        description: upstream bfs version to build
-        required: true
-        default: "4.1.1"
+        description: 'upstream bfs version to build'
+        required: false
+        default: '4.1.1'
       ugrep_version:
-        description: upstream ugrep version to build
-        required: true
-        default: "7.8.4"
+        description: 'upstream ugrep version to build'
+        required: false
+        default: '7.8.4'
       pcre2_version:
-        description: PCRE2 version linked into ugrep
-        required: true
-        default: "10.44"
+        description: 'PCRE2 version linked into ugrep'
+        required: false
+        default: '10.44'
       create_release:
-        description: Publish a GitHub release with the bundle
+        description: 'Publish a GitHub release with the bundle'
         type: boolean
         default: true
 
@@ -40,7 +47,81 @@ permissions:
   contents: write
 
 jobs:
+  # ===========================================================================
+  # 1. Detect: newest source-server release + its real component versions
+  # ===========================================================================
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      zcode_version: ${{ steps.versions.outputs.zcode }}
+      node_version: ${{ steps.versions.outputs.node }}
+      node_pty_version: ${{ steps.versions.outputs.node_pty }}
+      koffi_version: ${{ steps.versions.outputs.koffi }}
+      bfs_version: ${{ steps.versions.outputs.bfs }}
+      ugrep_version: ${{ steps.versions.outputs.ugrep }}
+      pcre2_version: ${{ steps.versions.outputs.pcre2 }}
+      tag: ${{ steps.versions.outputs.tag }}
+      skip: ${{ steps.check.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # discovery derives the baseline from release tags
+
+      - id: versions
+        name: Detect newest source-server release
+        run: |
+          if [ -n "${{ inputs.zcode_version }}" ]; then
+            ZCODE="${{ inputs.zcode_version }}"
+            NODE="${{ inputs.node_version }}"
+            PTY="${{ inputs.node_pty_version }}"
+            KOFFI="${{ inputs.koffi_version }}"
+            BFS="${{ inputs.bfs_version }}"
+            UGREP="${{ inputs.ugrep_version }}"
+            PCRE2="${{ inputs.pcre2_version }}"
+          else
+            bash scripts/discover-source-server.sh > discovered.env
+            if [ ! -s discovered.env ]; then
+              echo "nothing newer than the last built release"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            # shellcheck disable=SC1091
+            . ./discovered.env
+            ZCODE="$NEW_VERSION"; NODE="${NEW_NODE#v}"; PTY="$NEW_NODE_PTY"
+            KOFFI="$NEW_KOFFI"; BFS="$NEW_BFS"; UGREP="$NEW_UGREP"
+            PCRE2="${{ inputs.pcre2_version || '10.44' }}"
+          fi
+          echo "zcode=$ZCODE"      >> "$GITHUB_OUTPUT"
+          echo "node=$NODE"        >> "$GITHUB_OUTPUT"
+          echo "node_pty=$PTY"     >> "$GITHUB_OUTPUT"
+          echo "koffi=$KOFFI"      >> "$GITHUB_OUTPUT"
+          echo "bfs=$BFS"          >> "$GITHUB_OUTPUT"
+          echo "ugrep=$UGREP"      >> "$GITHUB_OUTPUT"
+          echo "pcre2=$PCRE2"      >> "$GITHUB_OUTPUT"
+          echo "tag=v${ZCODE}-${NODE}" >> "$GITHUB_OUTPUT"
+          echo "Detected: zcode=$ZCODE node=$NODE node-pty=$PTY koffi=$KOFFI bfs=$BFS ugrep=$UGREP"
+
+      - id: check
+        name: Check if release already exists
+        if: steps.versions.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.versions.outputs.tag }}"
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release $TAG already exists - skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Release $TAG not found - will build."
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ===========================================================================
+  # 2. Build the bundle inside centos:7
+  # ===========================================================================
   build:
+    needs: detect
+    if: needs.detect.outputs.skip != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -54,23 +135,25 @@ jobs:
           file: build/Dockerfile.centos7
           outputs: type=local,dest=artifacts
           build-args: |
-            ZCODE_VERSION=${{ inputs.zcode_version }}
-            NODE_VERSION=${{ inputs.node_version }}
-            NODE_PTY_VERSION=${{ inputs.node_pty_version }}
-            BFS_VERSION=${{ inputs.bfs_version }}
-            UGREP_VERSION=${{ inputs.ugrep_version }}
-            PCRE2_VERSION=${{ inputs.pcre2_version }}
+            ZCODE_VERSION=${{ needs.detect.outputs.zcode_version }}
+            NODE_VERSION=${{ needs.detect.outputs.node_version }}
+            NODE_PTY_VERSION=${{ needs.detect.outputs.node_pty_version }}
+            KOFFI_VERSION=${{ needs.detect.outputs.koffi_version }}
+            BFS_VERSION=${{ needs.detect.outputs.bfs_version }}
+            UGREP_VERSION=${{ needs.detect.outputs.ugrep_version }}
+            PCRE2_VERSION=${{ needs.detect.outputs.pcre2_version }}
 
       - name: Show artifact tree
         run: find artifacts -type f | sort
 
       - name: Package bundle
         env:
-          NODE_VERSION: v${{ inputs.node_version }}
-          NODE_PTY_VERSION: v${{ inputs.node_pty_version }}
-          BFS_VERSION: v${{ inputs.bfs_version }}-2
-          UGREP_VERSION: v${{ inputs.ugrep_version }}-1
-          ZCL_ZCODE_VERSION: ${{ inputs.zcode_version }}
+          NODE_VERSION: v${{ needs.detect.outputs.node_version }}
+          NODE_PTY_VERSION: v${{ needs.detect.outputs.node_pty_version }}
+          KOFFI_VERSION: v${{ needs.detect.outputs.koffi_version }}
+          BFS_VERSION: v${{ needs.detect.outputs.bfs_version }}-2
+          UGREP_VERSION: v${{ needs.detect.outputs.ugrep_version }}-1
+          ZCL_ZCODE_VERSION: ${{ needs.detect.outputs.zcode_version }}
         run: |
           set -euo pipefail
           bash build/package.sh --from-artifacts artifacts/artifacts --out dist
@@ -81,14 +164,18 @@ jobs:
           set -euo pipefail
           tar tzf dist/*.tar.gz >/dev/null
           mkdir -p unpack && tar xzf dist/*.tar.gz -C unpack
-          for f in unpack/node unpack/pty.node unpack/bfs unpack/ugrep; do
+          for f in unpack/node unpack/pty.node unpack/koffi.node unpack/bfs unpack/ugrep; do
+            [ -f "$f" ] || continue
             max="$(objdump -T "$f" | grep -oE 'GLIBC_2\.[0-9]+(\.[0-9]+)?' | sort -Vu | tail -n1)"
             echo "$f -> $max"
             test "$(printf '%s\n2.17\n' "${max#GLIBC_}" | sort -V | tail -n1)" = "2.17"
           done
-          refs="$(objdump -T unpack/pty.node | grep -cE 'GLIBCXX_|CXXABI_' || true)"
-          echo "pty.node libstdc++ refs: $refs"
-          test "$refs" -eq 0
+          for f in unpack/pty.node unpack/koffi.node; do
+            [ -f "$f" ] || continue
+            refs="$(objdump -T "$f" | grep -cE 'GLIBCXX_|CXXABI_' || true)"
+            echo "$f libstdc++ refs: $refs"
+            test "$refs" -eq 0
+          done
 
       - name: Upload bundle artifact
         uses: actions/upload-artifact@v4
@@ -98,35 +185,36 @@ jobs:
           retention-days: 7
 
       - name: Publish release
-        if: ${{ inputs.create_release }}
+        if: ${{ github.event_name == 'schedule' || inputs.create_release }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ inputs.zcode_version }}-${{ inputs.node_version }}
-          name: ZCode ${{ inputs.zcode_version }} / node v${{ inputs.node_version }} legacy runtime
+          tag_name: ${{ needs.detect.outputs.tag }}
+          name: ZCode ${{ needs.detect.outputs.zcode_version }} / node v${{ needs.detect.outputs.node_version }} legacy runtime
           body: |
-            glibc-2.17 compatible replacements for the ZCode remote runtime.
+            glibc-2.17 compatible replacements for the ZCode remote runtime (source-server layout).
 
             | component | ZCode version | upstream |
             | --- | --- | --- |
-            | node-runtime | v${{ inputs.node_version }} | Node.js ${{ inputs.node_version }} (glibc-217 build) |
-            | node-pty | v${{ inputs.node_pty_version }} | node-pty ${{ inputs.node_pty_version }} rebuilt |
-            | bfs | v${{ inputs.bfs_version }}-2 | bfs ${{ inputs.bfs_version }} |
-            | ugrep | v${{ inputs.ugrep_version }}-1 | ugrep ${{ inputs.ugrep_version }} + PCRE2 ${{ inputs.pcre2_version }} |
+            | node-runtime | v${{ needs.detect.outputs.node_version }} | Node.js ${{ needs.detect.outputs.node_version }} (glibc-217 build) |
+            | node-pty | v${{ needs.detect.outputs.node_pty_version }} | node-pty ${{ needs.detect.outputs.node_pty_version }} rebuilt |
+            | koffi | v${{ needs.detect.outputs.koffi_version }} | koffi ${{ needs.detect.outputs.koffi_version }} rebuilt |
+            | bfs | v${{ needs.detect.outputs.bfs_version }}-2 | bfs ${{ needs.detect.outputs.bfs_version }} |
+            | ugrep | v${{ needs.detect.outputs.ugrep_version }}-1 | ugrep ${{ needs.detect.outputs.ugrep_version }} + PCRE2 ${{ needs.detect.outputs.pcre2_version }} |
 
             Apply with:
 
             ```bash
-            ~/.zcode/legacy-glibc/scripts/apply.sh --bundle zcode-legacy-glibc-<tag>.tar.gz
+            ~/.zcode/legacy-glibc/scripts/apply.sh          # newest cached bundle
+            # or fetch this release's tarball and: apply.sh --bundle zcode-legacy-glibc-<tag>.tar.gz
             ~/.zcode/legacy-glibc/scripts/verify.sh
             ```
           files: |
             dist/*.tar.gz
             dist/*.sha256
 
-
   cleanup:
     runs-on: ubuntu-latest
-    needs: build
+    needs: [detect, build]
     if: ${{ always() }}
     steps:
       - name: Prune old workflow runs (keep the newest KEEP_N, delete their artifacts)

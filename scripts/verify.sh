@@ -7,6 +7,10 @@ set -euo pipefail
 RUNTIME_ROOT="${ZCODE_RUNTIME_ROOT:-$HOME/.zcode/server}"
 GLIBC_CEILING="${ZCL_GLIBC_CEILING:-2.17}"
 GLIBCXX_CEILING="${ZCL_GLIBCXX_CEILING:-3.4.19}"
+BACKUP_SUFFIX=".official-glibc228.bak"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=layout.sh
+. "$SCRIPT_DIR/layout.sh"
 
 FAILED=0
 
@@ -23,8 +27,8 @@ max_symbol() {  # file pattern
   echo "${out:-none}"
 }
 
-check_binary() {  # id path expected_version
-  local id="$1" path="$2" expect="${3:-}"
+check_binary() {  # id path
+  local id="$1" path="$2"
   [ -f "$path" ] || { bad "$id: missing $path"; return; }
   [ -x "$path" ] || { bad "$id: not executable: $path"; return; }
 
@@ -36,8 +40,10 @@ check_binary() {  # id path expected_version
     log "$id: statically linked (no GLIBC symbols)"
   elif version_le "${glibc#GLIBC_}" "$GLIBC_CEILING"; then
     ok "$id: glibc ceiling $glibc <= $GLIBC_CEILING"
+  elif [ -f "$path$BACKUP_SUFFIX" ]; then
+    bad "$id: requires $glibc > $GLIBC_CEILING (replacement did not take effect?)"
   else
-    bad "$id: requires $glibc > $GLIBC_CEILING"
+    warn "$id: still the official build (requires $glibc) - expected when the bundle has no replacement for it"
   fi
 
   if [ "$id" = "node-runtime" ] && [ "$glibcxx" != "none" ]; then
@@ -45,43 +51,57 @@ check_binary() {  # id path expected_version
       && ok "$id: libstdc++ ceiling $glibcxx <= $GLIBCXX_CEILING" \
       || bad "$id: requires $glibcxx > $GLIBCXX_CEILING"
   fi
-
-  if [ -n "$expect" ]; then
-    log "$id: desktop expects '$expect'"
-  fi
 }
 
-marker_version() {  # id
-  case "$1" in
-    node-runtime) sed -n 's/.*"version":"\([^"]*\)".*/\1/p' "$RUNTIME_ROOT/.asset-components/node-runtime.json" 2>/dev/null | head -n1 ;;
-    node-pty)     sed -n 's/.*"version":"\([^"]*\)".*/\1/p' "$RUNTIME_ROOT/.asset-components/node-pty.json" 2>/dev/null | head -n1 ;;
-    bfs)          tr -d ' \t\r\n' < "$RUNTIME_ROOT/tools/bfs/.version" 2>/dev/null || true ;;
-    ugrep)        tr -d ' \t\r\n' < "$RUNTIME_ROOT/tools/ugrep/.version" 2>/dev/null || true ;;
-    ripgrep)      tr -d ' \t\r\n' < "$RUNTIME_ROOT/tools/ripgrep/.version" 2>/dev/null || true ;;
-  esac
-}
+LAYOUT="$(runtime_layout "$RUNTIME_ROOT")"
+[ "$LAYOUT" != "none" ] || { echo "  [ERROR] no runtime found at $RUNTIME_ROOT" >&2; exit 1; }
+log "layout: $LAYOUT"
 
-NODE="$RUNTIME_ROOT/node"
-PTY="$RUNTIME_ROOT/build/Release/pty.node"
-BFS="$RUNTIME_ROOT/tools/bfs/bfs"
-UGREP="$RUNTIME_ROOT/tools/ugrep/ugrep"
-RG="$RUNTIME_ROOT/tools/ripgrep/rg"
+RD=""
+if [ "$LAYOUT" = "new" ]; then
+  RD="$(release_dir "$RUNTIME_ROOT")"
+  [ -n "$RD" ] || { echo "  [ERROR] current.json has no releaseDir" >&2; exit 1; }
+fi
+
+NODE="$(component_path "$RUNTIME_ROOT" "$LAYOUT" node-runtime)"
+PTY="$(component_path "$RUNTIME_ROOT" "$LAYOUT" node-pty)"
+BFS="$(component_path "$RUNTIME_ROOT" "$LAYOUT" bfs)"
+UGREP="$(component_path "$RUNTIME_ROOT" "$LAYOUT" ugrep)"
+RG="$(component_path "$RUNTIME_ROOT" "$LAYOUT" ripgrep)"
+KOFFI="$(component_path "$RUNTIME_ROOT" "$LAYOUT" koffi)"
 
 echo "== binaries =="
-check_binary node-runtime "$NODE" "$(marker_version node-runtime)"
-check_binary node-pty     "$PTY"  "$(marker_version node-pty)"
-check_binary bfs          "$BFS"  "$(marker_version bfs)"
-check_binary ugrep        "$UGREP" "$(marker_version ugrep)"
-check_binary ripgrep      "$RG"   "$(marker_version ripgrep)"
+check_binary node-runtime "$NODE"
+check_binary node-pty     "$PTY"
+check_binary bfs          "$BFS"
+check_binary ugrep        "$UGREP"
+check_binary ripgrep      "$RG"
+[ -n "$KOFFI" ] && [ -f "$KOFFI" ] && check_binary koffi "$KOFFI"
 
 echo "== node runtime =="
 if [ -x "$NODE" ]; then
   v="$("$NODE" -v 2>/dev/null || true)"
   [ -n "$v" ] && ok "node -v -> $v" || bad "node cannot run"
-  sb="$RUNTIME_ROOT/zcode-server.cjs"
-  if [ -f "$sb" ]; then
-    sv="$(timeout 60 "$NODE" "$sb" --version 2>/dev/null | tr -d '\r\n' || true)"
-    [ -n "$sv" ] && ok "zcode-server.cjs --version -> $sv" || bad "server bundle failed to start"
+  if [ "$LAYOUT" = "new" ]; then
+    sv="$(timeout 60 "$RUNTIME_ROOT/bin/zcode" --version 2>/dev/null | tr -d '\r\n' || true)"
+    [ -n "$sv" ] && ok "bin/zcode --version -> $sv" || bad "bin/zcode failed to run"
+    rt_dir="$(dirname "$NODE")"
+    kv="$(cd "$rt_dir" && timeout 30 "$NODE" -e 'try{console.log("koffi "+require("koffi/package.json").version)}catch(e){console.log("KOFFI_UNAVAILABLE")}' 2>/dev/null | tr -d '\r\n' || true)"
+    if [ "$kv" = "KOFFI_UNAVAILABLE" ]; then
+      if [ -f "$KOFFI$BACKUP_SUFFIX" ]; then
+        bad "koffi cannot be loaded (replacement broken)"
+      else
+        warn "koffi unavailable (official build needs glibc 2.28) - TUI-dependent features may degrade"
+      fi
+    elif [ -n "$kv" ]; then
+      ok "$kv loads"
+    fi
+  else
+    sb="$RUNTIME_ROOT/zcode-server.cjs"
+    if [ -f "$sb" ]; then
+      sv="$(timeout 60 "$NODE" "$sb" --version 2>/dev/null | tr -d '\r\n' || true)"
+      [ -n "$sv" ] && ok "zcode-server.cjs --version -> $sv" || bad "server bundle failed to start"
+    fi
   fi
 fi
 
@@ -92,11 +112,21 @@ if [ -x "$NODE" ] && [ -f "$PTY" ]; then
   else
     bad "pty.node failed to load: $("$NODE" -e "require(process.argv[1])" "$PTY" 2>&1 | head -n1)"
   fi
+  pty_js="$(dirname "$NODE")/node_modules/node-pty"
+  if [ -d "$pty_js" ]; then
+    out="$(cd "$pty_js/.." && timeout 20 "$NODE" -e '
+const pty=require("node-pty");
+const p=pty.spawn("/bin/sh",["-c","echo PTY_OK"],{name:"xterm",cols:80,rows:24,cwd:"/tmp"});
+let buf="";p.onData(d=>buf+=d);
+p.onExit(()=>{process.stdout.write(buf.includes("PTY_OK")?"spawn-ok":"spawn-no-echo");process.exit(0)});
+setTimeout(()=>{process.stdout.write("spawn-timeout");process.exit(1)},8000);
+' 2>/dev/null | tr -d '\r\n' || true)"
+    [ "$out" = "spawn-ok" ] && ok "pty spawn -> real /dev/pts works" || bad "pty spawn: ${out:-no output}"
+  fi
 fi
 
 echo "== tool binaries =="
-for t in "$RG:$RG" "$BFS:$BFS" "$UGREP:$UGREP"; do
-  bin="${t%%:*}"
+for bin in "$RG" "$BFS" "$UGREP"; do
   [ -x "$bin" ] || continue
   out="$("$bin" --version 2>&1 | head -n1 || true)"
   [ -n "$out" ] && ok "$(basename "$bin"): $out" || bad "$(basename "$bin") --version produced no output"

@@ -141,3 +141,69 @@ Build environment notes (EL7):
 - The desktop keeps its cache in `%APPDATA%\ZCode\remote-assets-cache` (`ZCODE_REMOTE_ASSET_CACHE_DIR`
   overrides it) and writes deploy logs under `%APPDATA%\ZCode\..\.zcode\v2\logs\` — the
   `[deploy] [remote-assets]` lines are the fastest way to see why something was (re)uploaded.
+
+---
+
+## 8. ZCode 3.16.x: the source-server layout (verified 2026-10-24)
+
+Desktop 3.16.x replaced the component-assets scheme with a self-contained **source server** and
+changed its glibc posture from "refuse" to "warn and install anyway". Everything below was read
+from `resources/app.asar` of desktop 3.16.3 and re-verified by a real deploy on the EL7 host.
+
+### 8.1 What the desktop now does on connect
+
+- Probe (`buildSourceServerProbeCommand`): `uname`, `getconf GNU_LIBC_VERSION`, `-f ~/.zcode/server/bin/zcode`
+  (INSTALLED), `current.json` (RELEASE identity + `version`), `run/status.json` (daemon liveness via `kill -0`).
+- `warnUnsupportedGlibc` with `MIN=[2,28]`: *"Remote glibc 2.17 is older than glibc 2.28 ... ZCode
+  Source Server may fail to start. Continuing installation or connection."* — it **no longer refuses**.
+- Bootstrap: upload `zcode-server-linux-x64.tar.gz` to `~/.zcode/server/.bootstrap-<pid>-<ts>/`,
+  `tar -xzf ... --strip-components=1`, then the staged tree installs itself:
+  `<extract>/bin/zcode update --from-archive <archive> --server-root ~/.zcode/server --json --progress`
+  — on EL7 this dies in `runtime/node` (the ld.so errors), the bootstrap dir is rm -rf'd, and only
+  the `server/` directory mtime survives.
+- Start: `bin/zcode serve --daemon --json --server-root ~/.zcode/server`; the desktop then reads
+  `run/ingress-token` and opens an SSH direct-tcpip channel to `status.json.port`
+  (fallback: `bin/zcode server proxy-stdio`).
+
+### 8.2 Installed tree (written by the official updater, not us)
+
+```
+~/.zcode/server/
+  bin/zcode                  # sh wrapper: sed releaseDir out of current.json, exec <releaseDir>/runtime/node
+  current.json               # version, nodeVersion, releaseId=3.16.3-linux-x64-<sha8>, releaseDir (absolute), archiveSha256, components[]
+  install.json               # installationId, installedAt
+  releases/<releaseId>/      # the real tree: runtime/{node,server-cli.js,server-core.js,node_modules,packages,tools}
+  run/                       # status.json (pid/port/state ready), ingress-token, control.sock, server.lock
+```
+
+### 8.3 What still breaks on glibc 2.17, and what fixes it
+
+| Component | Official build needs | Replacement used |
+| --- | --- | --- |
+| `releases/<id>/runtime/node` | GLIBC_2.28 | kit node v22.16.0 glibc-217 (**same version the 3.16.3 manifest declares**) |
+| `node_modules/node-pty/prebuilds/linux-x64/pty.node` (node-pty **1.1.0**) | GLIBC_2.28 | the 1.2.0-beta.10-built `pty.node` **loads and spawns a real PTY under 1.1.0's JS** (verified); CI now rebuilds the exact declared version anyway |
+| `node_modules/koffi/build/koffi/linux_x64/koffi.node` (koffi 2.15.6) | GLIBC_2.28 | built from source in centos:7; the bundled **musl_x64 build is dynamically linked musl** and cannot be used on glibc hosts (verified: `libc.musl-x86_64.so.1: cannot open shared object file`) |
+| `tools/bfs/bfs` (4.1.1) | GLIBC_2.28 | kit bfs 4.1.1 — **same upstream version** |
+| `tools/ugrep/ugrep` (7.8.4) | GLIBC_2.28 | kit ugrep 7.8.4 — **same upstream version** |
+| `tools/ripgrep/rg` (14.1.1) | statically linked | official build works as-is |
+
+### 8.4 Deploy recipe that was verified end-to-end (2026-10-24, host 192.168.26.101)
+
+1. `mv ~/.zcode/server ~/.zcode/server.old-3.14-legacy` (instant rollback).
+2. Extract the official 3.16.3 archive, swap the kit node into the staged tree, run
+   `bin/zcode update --from-archive ... --server-root ~/.zcode/server --json --progress`
+   → `{"applied":true,"installed":true,"version":"3.16.3"}`, authentic `current.json`.
+3. Swap `node`, `pty.node`, `bfs`, `ugrep` inside `releases/<releaseId>/`.
+4. `bin/zcode --version` → `3.16.3`; `bin/zcode serve --daemon --json` →
+   `{"state":"ready","pid":...,"port":39297,...,"serviceRegistered":false}` (detached fallback —
+   the desktop treats `serviceRegistered:false` as a normal outcome), `run/status.json` +
+   `run/ingress-token` present, PTY spawn OK, all tools run.
+
+### 8.5 Version discovery (for CI)
+
+The desktop release feed is `https://cdn-zcode.z.ai/zcode/electron/releases/<ver>/source-server-release.json`
+(domestic mirror: `https://cdn.codegeex.cn/zcode/electron/releases/...`; backend is Aliyun OSS
+bucket `zcode-release.oss-cn-hongkong.aliyuncs.com`, key prefix `zcode/electron/releases/`,
+anonymous listing denied, no `latest` endpoint). Component versions are only inside the 91 MB
+archive (`manifest.json`, `runtime/node_modules/*/package.json`, `runtime/tools/*/SOURCES.json`),
+so honest discovery means downloading it. `scripts/discover-source-server.sh` implements this.

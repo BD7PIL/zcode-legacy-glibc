@@ -6,16 +6,21 @@ set -euo pipefail
 
 RUNTIME_ROOT="${ZCODE_RUNTIME_ROOT:-$HOME/.zcode/server}"
 BACKUP_SUFFIX=".official-glibc228.bak"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=layout.sh
+. "$SCRIPT_DIR/layout.sh"
 
 log() { echo "  [INFO]  $*"; }
 err() { echo "  [ERROR] $*" >&2; }
 
-TARGETS=(
-  "$RUNTIME_ROOT/node"
-  "$RUNTIME_ROOT/build/Release/pty.node"
-  "$RUNTIME_ROOT/tools/bfs/bfs"
-  "$RUNTIME_ROOT/tools/ugrep/ugrep"
-)
+LAYOUT="$(runtime_layout "$RUNTIME_ROOT")"
+[ "$LAYOUT" != "none" ] || { err "no runtime found at $RUNTIME_ROOT"; exit 1; }
+
+TARGETS=()
+for id in node-runtime node-pty koffi bfs ugrep; do
+  p="$(component_path "$RUNTIME_ROOT" "$LAYOUT" "$id")"
+  [ -n "$p" ] && TARGETS+=("$p")
+done
 
 RESTORED=0
 for target in "${TARGETS[@]}"; do

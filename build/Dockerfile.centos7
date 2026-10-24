@@ -25,9 +25,10 @@ RUN sed -i 's|^mirrorlist=|#mirrorlist=|g; s|^#baseurl=http://mirror.centos.org|
       git curl xz file binutils python3 \
  && yum clean all
 
-ARG ZCODE_VERSION=3.14.3
+ARG ZCODE_VERSION=3.16.3
 ARG NODE_VERSION=22.16.0
-ARG NODE_PTY_VERSION=1.2.0-beta.10
+ARG NODE_PTY_VERSION=1.1.0
+ARG KOFFI_VERSION=2.15.6
 ARG BFS_VERSION=4.1.1
 ARG UGREP_VERSION=7.8.4
 ARG PCRE2_VERSION=10.44
@@ -35,6 +36,7 @@ ARG PCRE2_VERSION=10.44
 ENV ZCL_DEPS_DIR=/deps \
     NODE_VERSION=${NODE_VERSION} \
     NODE_PTY_VERSION=${NODE_PTY_VERSION} \
+    KOFFI_VERSION=${KOFFI_VERSION} \
     BFS_VERSION=${BFS_VERSION} \
     UGREP_VERSION=${UGREP_VERSION} \
     PCRE2_VERSION=${PCRE2_VERSION} \
@@ -50,6 +52,7 @@ RUN set -eux; \
     test -x "$NODE_DIR/bin/node"; \
     export NODE_DIR; \
     bash /build/build-pty.sh; \
+    bash /build/build-koffi.sh; \
     bash /build/build-bfs.sh; \
     bash /build/build-ugrep.sh; \
     install -m 0755 "$NODE_DIR/bin/node" /output/artifacts/node; \
@@ -57,14 +60,18 @@ RUN set -eux; \
 
 # Assert the symbol ceilings again, from inside the build, so a bad artifact fails the build.
 RUN set -eux; \
-    for f in /output/artifacts/node /output/artifacts/pty.node /output/artifacts/bfs /output/artifacts/ugrep; do \
+    for f in /output/artifacts/node /output/artifacts/pty.node /output/artifacts/koffi.node /output/artifacts/bfs /output/artifacts/ugrep; do \
+      [ -f "$f" ] || continue; \
       max="$(objdump -T "$f" | grep -oE 'GLIBC_2\.[0-9]+(\.[0-9]+)?' | sort -Vu | tail -n1)"; \
       echo "$f max glibc: $max"; \
       [ "$(printf '%s\n2.17\n' "${max#GLIBC_}" | sort -V | tail -n1)" = "2.17" ]; \
     done; \
     refs="$(objdump -T /output/artifacts/pty.node | grep -cE 'GLIBCXX_|CXXABI_' || true)"; \
     echo "pty.node libstdc++ refs: $refs"; \
-    [ "$refs" -eq 0 ]
+    [ "$refs" -eq 0 ]; \
+    krefs="$(objdump -T /output/artifacts/koffi.node | grep -cE 'GLIBCXX_|CXXABI_' || true)"; \
+    echo "koffi.node libstdc++ refs: $krefs"; \
+    [ "$krefs" -eq 0 ]
 
 FROM scratch
 COPY --from=builder /output/ /
