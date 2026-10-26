@@ -98,6 +98,13 @@ mkdir -p "$OUT_DIR"
 TAG="v${ZCODE_VERSION}-${NODE_VERSION#v}"
 TARBALL="$OUT_DIR/zcode-legacy-glibc-${TAG}.tar.gz"
 
+# The bundle ships the kit's own scripts so a device never needs the git repo.
+log "staging kit scripts"
+mkdir -p "$STAGE/scripts"
+for s in "$SCRIPT_DIR/../scripts/"*.sh; do
+  install -m 0755 "$s" "$STAGE/scripts/$(basename "$s")"
+done
+
 log "writing manifest"
 {
   echo "{"

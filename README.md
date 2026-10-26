@@ -79,16 +79,18 @@ No `yum install`, no system library replacement, no container runtime required.
 
 ## Install
 
-```bash
-# 1. put the kit somewhere on the legacy host (any path works)
-git clone https://github.com/BD7PIL/zcode-legacy-glibc.git ~/.zcode/legacy-glibc
+One command on the legacy host — no git, no manual steps:
 
-# 2. fetch a bundle and apply it
-mkdir -p ~/.zcode/legacy-glibc/cache
-curl -L -o ~/.zcode/legacy-glibc/cache/zcode-legacy-glibc-latest.tar.gz \
-  https://github.com/BD7PIL/zcode-legacy-glibc/releases/latest/download/zcode-legacy-glibc-<tag>.tar.gz
-~/.zcode/legacy-glibc/scripts/apply.sh
+```bash
+curl -fsSL https://github.com/BD7PIL/zcode-legacy-glibc/releases/latest/download/install.sh | bash
 ```
+
+`install.sh` downloads the release bundle (replacement binaries **and the kit scripts** — a
+device never clones this repo), verifies its sha256, installs the kit to
+`~/.zcode/legacy-glibc`, then runs `apply.sh`: a fresh host first fetches the official
+source-server archive from the ZCode release CDN and installs it through ZCode's own updater
+under the glibc-217 node (we do not redistribute ZCode's proprietary binaries), and the
+replacement binaries are applied on top. Pinned install: `install.sh v3.16.3-22.16.0`.
 
 `apply.sh` backs up every file it replaces next to the original with the suffix
 `.official-glibc228.bak`, then runs `verify.sh`.
@@ -97,6 +99,7 @@ curl -L -o ~/.zcode/legacy-glibc/cache/zcode-legacy-glibc-latest.tar.gz \
 
 | Command | Purpose |
 | --- | --- |
+| `curl .../install.sh \| bash` | One-command fresh install (fetches the release, installs kit + runtime, verifies) |
 | `scripts/apply.sh [--bundle PATH] [--check] [--no-verify] [--force]` | Install the compatible binaries from a bundle (or the newest cache entry); bootstraps a fresh host when no runtime exists |
 | `scripts/verify.sh` | Assert GLIBC/GLIBCXX ceilings, load and **spawn** `pty.node`, load koffi, run every tool |
 | `scripts/rollback.sh` | Restore every `*.official-glibc228.bak` |
