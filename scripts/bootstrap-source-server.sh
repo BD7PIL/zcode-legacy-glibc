@@ -94,9 +94,37 @@ tar -xzf "$ARCHIVE" -C "$EXTRACT" --strip-components=1
 [ -f "$EXTRACT/bin/zcode" ] || die "staged archive has no bin/zcode - unexpected archive layout"
 
 install -m 0755 "$NODE_SRC" "$EXTRACT/runtime/node"
+
+# Since 3.17.1 the updater ends with a "restart" phase: it launches the NEW release's server
+# core and waits for state "ready" (waitForUpdateReady). The new release ships the official
+# glibc-2.28 node, which dies instantly on this host -> "Server Core failed while applying
+# update". The release dir name is deterministic (<version>-linux-x64-<first 12 of archive
+# sha256>), so a watchtower keeps the legacy node in place inside the new release dir while
+# the updater runs, beating the smoke-start to the punch.
+SHA12="$(sha256sum "$ARCHIVE" | cut -c1-12)"
+NEW_RUNTIME="$RUNTIME_ROOT/releases/$ZCODE_VERSION-linux-x64-$SHA12/runtime"
+WATCHTOWER=""
+( while [ ! -f "$WORK/updater.done" ]; do
+    if [ -d "$NEW_RUNTIME" ]; then
+      cp -f "$NODE_SRC" "$NEW_RUNTIME/node.wt" 2>/dev/null \
+        && mv -f "$NEW_RUNTIME/node.wt" "$NEW_RUNTIME/node" 2>/dev/null || true
+    fi
+    sleep 0.3
+  done ) &
+WATCHTOWER=$!
+trap 'touch "$WORK/updater.done"; [ -n "${WATCHTOWER:-}" ] && kill "$WATCHTOWER" 2>/dev/null; rm -rf "$WORK"' EXIT
+
 log "running official updater under the glibc-217 node"
-"$EXTRACT/bin/zcode" update --from-archive "$ARCHIVE" --server-root "$RUNTIME_ROOT" --json --progress > "$WORK/update.json" 2>"$WORK/update.err" \
-  || { tail -5 "$WORK/update.err" >&2; die "official update step failed (see above)"; }
+set +e
+"$EXTRACT/bin/zcode" update --from-archive "$ARCHIVE" --server-root "$RUNTIME_ROOT" --json --progress > "$WORK/update.json" 2>"$WORK/update.err"
+RC=$?
+set -e
+touch "$WORK/updater.done" 2>/dev/null || true
+[ -n "$WATCHTOWER" ] && kill "$WATCHTOWER" 2>/dev/null || true
+if [ $RC -ne 0 ]; then
+  tail -5 "$WORK/update.err" >&2
+  die "official update step failed (exit $RC; see above)"
+fi
 tail -1 "$WORK/update.json"
 
 [ -f "$RUNTIME_ROOT/current.json" ] || die "updater wrote no current.json - aborting"
