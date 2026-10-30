@@ -121,11 +121,47 @@ RC=$?
 set -e
 touch "$WORK/updater.done" 2>/dev/null || true
 [ -n "$WATCHTOWER" ] && kill "$WATCHTOWER" 2>/dev/null || true
+
 if [ $RC -ne 0 ]; then
-  tail -5 "$WORK/update.err" >&2
-  die "official update step failed (exit $RC; see above)"
+  # The restart phase (3.17.1+) launches the new core and waits for "ready"; on a fast disk the
+  # watchtower can lose that race ("Server Core failed while applying update"). By then the
+  # extract+verify phases have completed - the release tree on disk is complete and
+  # hash-verified, only the identity files were rolled back. current.json is fully derivable
+  # (the releaseId convention is <version>-linux-x64-<first 12 of archive sha256>, proven by
+  # 3.16.3 and 3.17.1), so finish the transaction by hand rather than re-rolling the race.
+  if grep -q '"phase":"restart"' "$WORK/update.json" 2>/dev/null; then
+    log "updater failed at the restart phase - completing the transaction by hand"
+    RD="$RUNTIME_ROOT/releases/$ZCODE_VERSION-linux-x64-$SHA12"
+    for f in runtime/server-cli.js runtime/server-core.js runtime/zcode.cjs runtime/node; do
+      [ -f "$RD/$f" ] || die "release tree incomplete at $RD/$f - cannot complete by hand"
+    done
+    install -m 0755 "$NODE_SRC" "$RD/runtime/node"
+    if [ ! -f "$RUNTIME_ROOT/install.json" ]; then
+      printf '{\n  "product": "zcode-server",\n  "schemaVersion": 1,\n  "canonicalServerRoot": "%s",\n  "installationId": "%s",\n  "installedAt": %s\n}\n' \
+        "$RUNTIME_ROOT" "$(cat /proc/sys/kernel/random/uuid 2>/dev/null || uuidgen)" "$(date +%s000)" \
+        > "$RUNTIME_ROOT/install.json"
+    fi
+    awk 'BEGIN{on=0} /^  "components":/{on=1} on{print} on&&/^\  \]/{exit}' "$EXTRACT/manifest.json" > "$WORK/components.json"
+    {
+      printf '{\n'
+      printf '  "version": "%s",\n' "$ZCODE_VERSION"
+      printf '  "releaseDir": "%s",\n' "$RD"
+      printf '  "nodeVersion": "%s",\n' "$(json_field "$EXTRACT/manifest.json" nodeVersion)"
+      printf '  "releaseId": "%s-linux-x64-%s",\n' "$ZCODE_VERSION" "$SHA12"
+      printf '  "appVersion": "%s",\n' "$ZCODE_VERSION"
+      printf '  "target": "%s",\n' "$(json_field "$EXTRACT/manifest.json" target)"
+      printf '  "archiveSha256": "%s",\n' "$ARCHIVE_SHA"
+      printf '  "components": '
+      cat "$WORK/components.json"
+      printf '\n}\n'
+    } > "$RUNTIME_ROOT/current.json"
+    log "identity written by hand: $(json_field "$RUNTIME_ROOT/current.json" releaseId)"
+  else
+    tail -5 "$WORK/update.err" >&2
+    die "official update step failed (exit $RC; see above)"
+  fi
 fi
-tail -1 "$WORK/update.json"
+tail -1 "$WORK/update.json" 2>/dev/null || true
 
 [ -f "$RUNTIME_ROOT/current.json" ] || die "updater wrote no current.json - aborting"
 log "bootstrapped: $(json_field "$RUNTIME_ROOT/current.json" releaseId)"
