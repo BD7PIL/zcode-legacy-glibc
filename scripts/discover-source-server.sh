@@ -18,6 +18,9 @@ CDN_LIST=(
   "${ZCL_SOURCE_CDN:-https://cdn-zcode.z.ai/zcode/electron/releases}"
   "https://cdn.codegeex.cn/zcode/electron/releases"
 )
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=layout.sh
+. "$SCRIPT_DIR/layout.sh"
 BASELINE="${ZCL_BASELINE_ZCODE:-3.16.3}"
 MAX_PROBES=90
 FROM=""
