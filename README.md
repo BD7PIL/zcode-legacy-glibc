@@ -93,7 +93,23 @@ under the glibc-217 node (we do not redistribute ZCode's proprietary binaries), 
 replacement binaries are applied on top. Pinned install: `install.sh v3.16.3-22.16.0`.
 
 `apply.sh` backs up every file it replaces next to the original with the suffix
-`.official-glibc228.bak`, then runs `verify.sh`.
+`.official-glibc228.bak`, then runs `verify.sh`, and `install.sh` finishes by wiring the
+**connection-time self-heal** (below).
+
+## Connection-time self-heal
+
+No cron. `install-hook.sh` puts a guard at the top of `~/.bashrc`: on every SSH exec (EL7 bash
+sources `.bashrc` for non-interactive ssh commands, and the desktop runs a shell probe on every
+connect), `on-connect.sh` compares the installed tree version against the newest cached bundle
+(~ms, flock-guarded, setsid-detached). On a mismatch — the state right after a ZCode desktop
+upgrade, whose own reinstall died on glibc and rolled back — it heals in the background:
+bootstrap the newer release from the CDN, apply the bundle, restart the daemon. When the cache
+holds nothing newer it checks the repo's latest GitHub release (hourly throttle, resumable
+download for slow egress). Log: `~/.zcode/legacy-glibc/on-connect.log`; remove the hook with
+`install-hook.sh --remove`.
+
+User story after a ZCode desktop upgrade: the first connect fails while the healer works
+(about a minute), the next connect probes a matching, ready server and just works.
 
 ## Commands
 

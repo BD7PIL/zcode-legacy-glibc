@@ -69,9 +69,15 @@ log "kit installed: $KIT_DIR (scripts + cached bundle)"
 log "applying (a fresh host downloads the official source-server from the ZCode CDN first)"
 bash "$KIT_DIR/scripts/apply.sh" --bundle "$KIT_DIR/cache/$BUNDLE_NAME"
 
+# --------------------------------------------------------------------------- connection-time self-heal
+if [ -x "$KIT_DIR/scripts/install-hook.sh" ]; then
+  bash "$KIT_DIR/scripts/install-hook.sh"
+fi
+
 echo
 echo "  [DONE]  ZCode remote runtime is installed and verified on this host."
-echo "          State: $KIT_DIR/state.env   Log hints: $KIT_DIR/selfcheck.log"
-echo "          Re-apply after a ZCode upgrade:  $KIT_DIR/scripts/apply.sh"
-echo "          Health check:                    $KIT_DIR/scripts/verify.sh"
-echo "          Rollback to official binaries:   $KIT_DIR/scripts/rollback.sh"
+echo "          State: $KIT_DIR/state.env   Health: $KIT_DIR/scripts/verify.sh"
+echo "          Self-heal: fires on every SSH connect; a ZCode desktop upgrade"
+echo "          is repaired on the next connect (first connect fails while the"
+echo "          healer works, give it a minute, then reconnect)."
+echo "          Log: $KIT_DIR/on-connect.log   Rollback: $KIT_DIR/scripts/rollback.sh"
