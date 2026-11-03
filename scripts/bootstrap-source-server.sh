@@ -104,15 +104,21 @@ install -m 0755 "$NODE_SRC" "$EXTRACT/runtime/node"
 SHA12="$(sha256sum "$ARCHIVE" | cut -c1-12)"
 NEW_RUNTIME="$RUNTIME_ROOT/releases/$ZCODE_VERSION-linux-x64-$SHA12/runtime"
 WATCHTOWER=""
-( while [ ! -f "$WORK/updater.done" ]; do
-    if [ -d "$NEW_RUNTIME" ]; then
-      cp -f "$NODE_SRC" "$NEW_RUNTIME/node.wt" 2>/dev/null \
-        && mv -f "$NEW_RUNTIME/node.wt" "$NEW_RUNTIME/node" 2>/dev/null || true
-    fi
-    sleep 0.3
-  done ) &
-WATCHTOWER=$!
-trap 'touch "$WORK/updater.done"; [ -n "${WATCHTOWER:-}" ] && kill "$WATCHTOWER" 2>/dev/null; rm -rf "$WORK"' EXIT
+# Every command in the EXIT trap must be failure-proof: bash 4.2 lets the trap's exit status
+# become the script's exit status, and a kill of an already-dead watcher would otherwise turn
+# a successful bootstrap into a false failure (seen in the wild, 2026-11-03).
+trap 'touch "$WORK/updater.done" 2>/dev/null || true; { [ -n "${WATCHTOWER:-}" ] && kill "$WATCHTOWER" 2>/dev/null; } || true; rm -rf "$WORK" 2>/dev/null || true' EXIT
+if [ ! -f "$NEW_RUNTIME/node" ] || ! "$NEW_RUNTIME/node" -v >/dev/null 2>&1; then
+  log "watchtower: seeding the legacy node into $NEW_RUNTIME while the updater runs"
+  ( while [ ! -f "$WORK/updater.done" ]; do
+      if [ -d "$NEW_RUNTIME" ]; then
+        cp -f "$NODE_SRC" "$NEW_RUNTIME/node.wt" 2>/dev/null \
+          && mv -f "$NEW_RUNTIME/node.wt" "$NEW_RUNTIME/node" 2>/dev/null || true
+      fi
+      sleep 0.3
+    done ) &
+  WATCHTOWER=$!
+fi
 
 log "running official updater under the glibc-217 node"
 set +e
