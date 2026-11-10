@@ -126,6 +126,17 @@ setTimeout(()=>{process.stdout.write("spawn-timeout");process.exit(1)},8000);
   fi
 fi
 
+echo "== builtin provider config (CLI login) =="
+cfg="$HOME/config/provider/zcode-builtin.json"
+if [ -f "$cfg" ]; then
+  ok "zcode-builtin.json present: $cfg"
+else
+  warn "zcode-builtin.json missing - 'zcode login ...' will fail (apply.sh places it from provisioning; or copy one from the desktop install)"
+fi
+if [ -f "$SCRIPT_DIR/../anchor-mismatch.env" ]; then
+  warn "version anchor mismatch: $(tr '\n' ' ' < "$SCRIPT_DIR/../anchor-mismatch.env")"
+fi
+
 echo "== tool binaries =="
 for bin in "$RG" "$BFS" "$UGREP"; do
   [ -x "$bin" ] || continue

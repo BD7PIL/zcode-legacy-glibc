@@ -248,6 +248,44 @@ if [ "$CHECK_ONLY" -eq 1 ]; then
   exit 0
 fi
 
+# --------------------------------------------------------------------------- builtin provider config
+# The CLI ("zcode login ...") resolves its built-in provider config from
+# <release>/runtime/provider/zcode-builtin.json or ~/config/provider/zcode-builtin.json
+# ("Built-in Provider Config" in server-core.js / zcode.cjs). A fresh release tree ships
+# neither - the desktop's own provisioning writes versioned copies under
+# ~/.zcode/v2/runtime/provider/linux-x86_64/<ver>/endpoint-*/, a path the CLI never checks
+# (upstream path mismatch, broke CLI login after the 3.17.2 upgrade; HANDOFF-2026-11-10).
+# ~/config/provider is the durable location: outside the release tree, survives upgrades,
+# and the CLI checks it. Never overwrite an existing copy.
+V2_DIR="${ZCL_V2_DIR:-$HOME/.zcode/v2}"
+CFG="$HOME/config/provider/zcode-builtin.json"
+if [ -f "$CFG" ]; then
+  log "builtin provider config present: $CFG"
+else
+  src=""
+  ver="$TREE_VERSION"
+  [ -n "$ver" ] || ver="$(json_field "$RUNTIME_ROOT/current.json" version 2>/dev/null || true)"
+  # candidate order: version-matched provisioning copy > newest provisioning copy > bundled
+  if [ -n "$ver" ]; then
+    cand="$(find "$V2_DIR/runtime/provider/linux-x86_64/$ver" -name zcode-builtin.json 2>/dev/null | head -n1)"
+    [ -n "$cand" ] && [ -f "$cand" ] && src="$cand"
+  fi
+  if [ -z "$src" ]; then
+    cand="$(find "$V2_DIR/runtime/provider/linux-x86_64" -mindepth 3 -maxdepth 3 -name zcode-builtin.json 2>/dev/null | sort -V | tail -n1)"
+    [ -n "$cand" ] && [ -f "$cand" ] && src="$cand"
+  fi
+  if [ -z "$src" ] && [ -f "$V2_DIR/runtime/provider/bundled/zcode-builtin.json" ]; then
+    src="$V2_DIR/runtime/provider/bundled/zcode-builtin.json"
+  fi
+  if [ -n "$src" ]; then
+    mkdir -p "$HOME/config/provider"
+    install -m 0644 "$src" "$CFG"
+    log "builtin provider config placed from $src"
+  else
+    warn "no zcode-builtin.json anywhere under $V2_DIR - CLI login (zcode login ...) will fail until the desktop provisions this host or you copy one into $CFG"
+  fi
+fi
+
 # --------------------------------------------------------------------------- state + verify
 mkdir -p "$STATE_DIR"
 {

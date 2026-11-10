@@ -82,11 +82,19 @@ fi
 
 [ -n "$NEWEST" ] || exit 0
 if [ "$NEWEST" = "$CUR" ]; then
+  rm -f "$KIT_DIR/anchor-mismatch.env"
   exit 0 # healthy - versions match
 fi
 if [ "$(printf '%s\n%s\n' "$NEWEST" "$CUR" | sort -V | tail -n1)" != "$NEWEST" ]; then
-  exit 0 # cache older than tree - nothing to heal (downgrade is not our business)
+  # The server auto-upgraded past the newest bundle we hold (CI lag). The tree still runs -
+  # the desktop's failed reinstall rolled back - but nothing to heal with yet. Report it
+  # instead of passing silently (verify.sh surfaces this), and retry on later connects.
+  log "WARN server $CUR is newer than newest bundle $NEWEST - waiting for CI to publish"
+  printf 'ZCL_SERVER_VERSION=%s\nZCL_BUNDLE_VERSION=%s\nZCL_MISMATCH_AT=%s\n' \
+    "$CUR" "$NEWEST" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" > "$KIT_DIR/anchor-mismatch.env"
+  exit 0
 fi
+rm -f "$KIT_DIR/anchor-mismatch.env"
 
 # ---------------------------------------------------------------- heal (background, locked)
 log "tree is $CUR, bundle $NEWEST available - healing"
