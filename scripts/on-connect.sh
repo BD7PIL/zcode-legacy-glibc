@@ -81,8 +81,22 @@ if [ -z "$NEWEST" ] || [ "$NEWEST" = "$CUR" ] || [ "$(printf '%s\n%s\n' "$NEWEST
 fi
 
 [ -n "$NEWEST" ] || exit 0
+
+# Version pairing cap: the desktop expects the remote server to match ITS paired version -
+# which is observable here as the newest versioned provisioning dir the desktop has written
+# (~/.zcode/v2/runtime/provider/linux-x86_64/<ver>/, excluding the 0.0.0-dev bucket). Chasing
+# the CDN's newest server release without this cap once upgraded a remote to 3.18.0 that the
+# desktop 3.17.2 refused to talk to (2026-11-11). Upgrade only to what the desktop pairs with.
+PAIRED="$(ls -1 "$HOME/.zcode/v2/runtime/provider/linux-x86_64" 2>/dev/null \
+  | grep -vE '^0\.0\.0-dev$' | sort -V | tail -n1)"
+if [ -n "$PAIRED" ] && [ "$(printf '%s\n%s\n' "$NEWEST" "$PAIRED" | sort -V | tail -n1)" = "$NEWEST" ] && [ "$NEWEST" != "$PAIRED" ]; then
+  log "WARN bundle $NEWEST exceeds desktop-paired server $PAIRED - refusing to overtake the desktop; waiting for the desktop app to move"
+  printf 'ZCL_SERVER_VERSION=%s\nZCL_BUNDLE_VERSION=%s\nZCL_DESKTOP_PAIRED=%s\nZCL_MISMATCH_AT=%s\n' \
+    "$CUR" "$NEWEST" "$PAIRED" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" > "$KIT_DIR/anchor-mismatch.env"
+  exit 0
+fi
+rm -f "$KIT_DIR/anchor-mismatch.env"
 if [ "$NEWEST" = "$CUR" ]; then
-  rm -f "$KIT_DIR/anchor-mismatch.env"
   exit 0 # healthy - versions match
 fi
 if [ "$(printf '%s\n%s\n' "$NEWEST" "$CUR" | sort -V | tail -n1)" != "$NEWEST" ]; then
