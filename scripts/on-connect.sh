@@ -34,6 +34,18 @@ current_version() {
 CUR="$(current_version)"
 [ -n "$CUR" ] || exit 0 # no tree at all; apply.sh/bootstrap handles that path explicitly
 
+# Desktop-paired version: the newest versioned provisioning dir the desktop has written here
+# (~/.zcode/v2/runtime/provider/linux-x86_64/<ver>/, excluding the 0.0.0-dev bucket). When it
+# is newer than the tree, the desktop app has just updated and its own glibc reinstall died -
+# the one signal that must not sit behind the hourly GitHub throttle (2026-11-11: this wait
+# cost an hour after the release was already published).
+PAIRED="$(ls -1 "$HOME/.zcode/v2/runtime/provider/linux-x86_64" 2>/dev/null \
+  | grep -vE '^0\.0\.0-dev$' | sort -V | tail -n1)"
+PAIRED_AHEAD=""
+if [ -n "$PAIRED" ] && [ "$(printf '%s\n%s\n' "$PAIRED" "$CUR" | sort -V | tail -n1)" = "$PAIRED" ] && [ "$PAIRED" != "$CUR" ]; then
+  PAIRED_AHEAD=1
+fi
+
 # newest cached bundle (zcodeVersion field of its manifest)
 NEWEST=""; BUNDLE=""
 for m in "$KIT_DIR"/cache/zcode-legacy-glibc-*.tar.gz; do
@@ -51,8 +63,8 @@ done
 if [ -z "$NEWEST" ] || [ "$NEWEST" = "$CUR" ] || [ "$(printf '%s\n%s\n' "$NEWEST" "$CUR" | sort -V | tail -n1)" = "$CUR" ]; then
   stamp="$KIT_DIR/.release-check.stamp"
   check=1
-  if [ -f "$stamp" ] && [ -n "$(find "$stamp" -mmin -60 2>/dev/null)" ]; then
-    check=0 # checked within the last hour
+  if [ -z "$PAIRED_AHEAD" ] && [ -f "$stamp" ] && [ -n "$(find "$stamp" -mmin -60 2>/dev/null)" ]; then
+    check=0 # checked within the last hour and the desktop has not just moved
   fi
   if [ "$check" -eq 1 ]; then
     touch "$stamp"
@@ -82,13 +94,9 @@ fi
 
 [ -n "$NEWEST" ] || exit 0
 
-# Version pairing cap: the desktop expects the remote server to match ITS paired version -
-# which is observable here as the newest versioned provisioning dir the desktop has written
-# (~/.zcode/v2/runtime/provider/linux-x86_64/<ver>/, excluding the 0.0.0-dev bucket). Chasing
-# the CDN's newest server release without this cap once upgraded a remote to 3.18.0 that the
-# desktop 3.17.2 refused to talk to (2026-11-11). Upgrade only to what the desktop pairs with.
-PAIRED="$(ls -1 "$HOME/.zcode/v2/runtime/provider/linux-x86_64" 2>/dev/null \
-  | grep -vE '^0\.0\.0-dev$' | sort -V | tail -n1)"
+# Version pairing cap: upgrade only to what the desktop pairs with (PAIRED, computed above).
+# Chasing the CDN's newest server release without this cap once upgraded a remote to 3.18.0
+# that the desktop 3.17.2 refused to talk to (2026-11-11).
 if [ -n "$PAIRED" ] && [ "$(printf '%s\n%s\n' "$NEWEST" "$PAIRED" | sort -V | tail -n1)" = "$NEWEST" ] && [ "$NEWEST" != "$PAIRED" ]; then
   log "WARN bundle $NEWEST exceeds desktop-paired server $PAIRED - refusing to overtake the desktop; waiting for the desktop app to move"
   printf 'ZCL_SERVER_VERSION=%s\nZCL_BUNDLE_VERSION=%s\nZCL_DESKTOP_PAIRED=%s\nZCL_MISMATCH_AT=%s\n' \
