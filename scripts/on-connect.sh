@@ -97,6 +97,14 @@ fi
 rm -f "$KIT_DIR/anchor-mismatch.env"
 
 # ---------------------------------------------------------------- heal (background, locked)
+# If the desktop's own bootstrap is in flight (it stages under .bootstrap-*), do not race it:
+# both sides end up writing current.json and the desktop side always dies on glibc anyway.
+# The desktop prunes stale staging dirs itself, so any dir here means a live attempt - defer,
+# the next connect re-checks.
+if ls "$S"/.bootstrap-* >/dev/null 2>&1; then
+  log "desktop bootstrap staging present - deferring heal to avoid a current.json write race"
+  exit 0
+fi
 log "tree is $CUR, bundle $NEWEST available - healing"
 pkill -f "$S/releases" 2>/dev/null && sleep 1
 
@@ -118,4 +126,14 @@ fi
 pkill -f "$S/releases" 2>/dev/null; sleep 1
 rm -f "$S/run/server.lock" "$S/run/control.sock"
 "$S/bin/zcode" serve --daemon --json --server-root "$S" >>"$LOG" 2>&1
-log "healed: $(current_version) ready"
+# 'healed' is only true when the daemon actually came up on the new version - serve can fail
+# (bad identity, port, ...) and status.json can be stale, so check both fields.
+sleep 3
+state="$(sed -n 's/.*"state"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$S/run/status.json" 2>/dev/null | head -n1)"
+ver="$(current_version)"
+if [ "$state" = "ready" ] && [ "$ver" = "$NEWEST" ]; then
+  log "healed: $ver ready"
+else
+  log "heal incomplete: daemon state=${state:-none} version=${ver:-none} (wanted $NEWEST) - will retry on next connect"
+  exit 1
+fi

@@ -157,10 +157,14 @@ if [ $RC -ne 0 ]; then
       printf '  "appVersion": "%s",\n' "$ZCODE_VERSION"
       printf '  "target": "%s",\n' "$(json_field "$EXTRACT/manifest.json" target)"
       printf '  "archiveSha256": "%s",\n' "$ARCHIVE_SHA"
-      printf '  "components": '
       cat "$WORK/components.json"
       printf '\n}\n'
-    } > "$RUNTIME_ROOT/current.json"
+    } > "$RUNTIME_ROOT/current.json.tmp.$$"
+    # current.json is the identity every later connect parses - validate before installing,
+    # and install atomically (a concurrent desktop bootstrap must never see a half-file).
+    "$NODE_SRC" -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));console.log("assembled current.json: valid JSON")' "$RUNTIME_ROOT/current.json.tmp.$$" \
+      || die "assembled current.json failed JSON validation - kept at $RUNTIME_ROOT/current.json.tmp.$$ for inspection"
+    mv -f "$RUNTIME_ROOT/current.json.tmp.$$" "$RUNTIME_ROOT/current.json"
     log "identity written by hand: $(json_field "$RUNTIME_ROOT/current.json" releaseId)"
   else
     tail -5 "$WORK/update.err" >&2
