@@ -159,6 +159,34 @@ fi
 
 pkill -f "$S/releases" 2>/dev/null; sleep 1
 rm -f "$S/run/server.lock" "$S/run/control.sock"
+
+# The headless core fail-closes without a credential-secret (~/.zcode/v2/credential-secret,
+# 0600, 32-4096 bytes) - even with an empty store (2026-11-11 demo, 2026-11-13 CyanSemi).
+# It does not generate one itself. An encrypted credentials.json from before a reinstall was
+# sealed with a key nobody kept, so it is dead weight: move it to a dated backup and mint a
+# fresh secret. The desktop re-pushes credentials on its next connect; provider auth may need
+# a desktop-side re-login.
+ensure_credential_secret() {
+  [ -n "${ZCODE_CREDENTIAL_SECRET:-}" ] && return 0
+  [ -n "${ZCODE_CREDENTIAL_SECRET_FILE:-}" ] && return 0
+  local f="$HOME/.zcode/v2/credential-secret"
+  [ -s "$f" ] && return 0
+  local creds="$HOME/.zcode/v2/credentials.json"
+  if [ -s "$creds" ]; then
+    local b="$HOME/.zcode/v2/credential-backup-$(date -u +%Y%m%d)"
+    mkdir -p "$b" 2>/dev/null || true
+    mv "$creds" "$b/credentials.json.moved" 2>/dev/null \
+      && log "credential-secret missing: stale encrypted credentials moved to $b (desktop re-pushes on next connect)"
+  fi
+  mkdir -p "$(dirname "$f")" 2>/dev/null || true
+  if head -c 32 /dev/urandom > "$f" 2>/dev/null && chmod 0600 "$f" 2>/dev/null; then
+    log "created credential-secret (32 bytes, 0600)"
+  else
+    log "WARN could not create $f - the daemon will fail closed"
+  fi
+}
+ensure_credential_secret
+
 "$S/bin/zcode" serve --daemon --json --server-root "$S" >>"$LOG" 2>&1
 # 'healed' is only true when the daemon actually came up on the new version - serve can fail
 # (bad identity, port, ...) and status.json can be stale, so check both fields.
