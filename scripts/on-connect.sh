@@ -41,6 +41,18 @@ CUR="$(current_version)"
 # cost an hour after the release was already published).
 PAIRED="$(ls -1 "$HOME/.zcode/v2/runtime/provider/linux-x86_64" 2>/dev/null \
   | grep -vE '^0\.0\.0-dev$' | sort -V | tail -n1)"
+# Manual lever for the window where the desktop app has updated but has not managed to connect
+# to THIS host yet: its provisioning dir still shows the old version, so the cap below would
+# refuse every upgrade until the desktop finally connects (2026-11-13: desktop 3.18.2, hosts
+# stuck on 3.18.0/3.17.2 with bundles available). `echo 3.18.2 > $KIT_DIR/desktop-version`.
+# It can only raise the cap, never lower it.
+if [ -f "$KIT_DIR/desktop-version" ]; then
+  ov="$(grep -oE '^[0-9]+(\.[0-9]+)+' "$KIT_DIR/desktop-version" 2>/dev/null | head -n1)"
+  if [ -n "$ov" ] && { [ -z "$PAIRED" ] || [ "$(printf '%s\n%s\n' "$ov" "$PAIRED" | sort -V | tail -n1)" = "$ov" ]; }; then
+    [ "$ov" = "$PAIRED" ] || log "desktop-version override: $ov (provisioning says ${PAIRED:-none})"
+    PAIRED="$ov"
+  fi
+fi
 PAIRED_AHEAD=""
 if [ -n "$PAIRED" ] && [ "$(printf '%s\n%s\n' "$PAIRED" "$CUR" | sort -V | tail -n1)" = "$PAIRED" ] && [ "$PAIRED" != "$CUR" ]; then
   PAIRED_AHEAD=1
