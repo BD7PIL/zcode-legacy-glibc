@@ -1,13 +1,18 @@
 name: Build legacy runtime bundle
 
-# One workflow, octg-style: a 6-hourly detect job reads the upstream truth (the ZCode source-server
+# One workflow, octg-style: an hourly detect job reads the upstream truth (the ZCode source-server
 # release CDN - there is no "latest" endpoint, so it probes forward from the newest version this
 # repo has built), and a Release tag is the build identity: if the tag exists, the whole chain
 # skips. Manual dispatch pins the versions explicitly and bypasses discovery.
+#
+# Hourly, not 6-hourly: the desktop auto-updates whenever upstream ships and then REFUSES the
+# older remote, so the gap between a desktop release and a build is a live outage for every
+# remote. 2026-11-11 (3.18.0) and 2026-11-13 (3.18.2) both landed within two days. A run with
+# nothing new is ~90 CDN probes and exits in 1-2 minutes.
 
 on:
   schedule:
-    - cron: '23 */6 * * *' # every 6h - probes ~90 CDN paths, then skips if nothing new
+    - cron: '23 * * * *' # hourly - probes ~90 CDN paths, then skips if nothing new
   workflow_dispatch:
     inputs:
       zcode_version:

@@ -91,18 +91,25 @@ log "newest source-server release: $NEWEST"
 # Pairing guard: the desktop pairs with the remote server running the DESKTOP's own release,
 # and the desktop app train can lag the source-server CDN (3.18.0 shipped on the CDN while the
 # desktop page still served 3.17.2; the desktop refuses a newer remote - 2026-11-11). The
-# official homepage carries the desktop version as plain text; if the newest server release is
-# ahead of it, upstream has not paired it yet - output nothing so CI skips. If the page cannot
-# be read at all, skip too (manual dispatch can always build explicitly).
-DESKTOP_PAGE="${ZCL_DESKTOP_PAGE:-https://zcode.z.ai/}"
-# Extract the desktop version from the download URLs' path segment
-# (electron/releases/<ver>/...) - the page is React-rendered (v<!-- -->3.x.y) so the visible
-# label is split by comments, and bare 3.x.y greps catch SVG-path noise like 3.33.66.
-DESKTOP="$(curl -fsSL --max-time 20 -L "$DESKTOP_PAGE" 2>/dev/null \
-  | grep -oE 'electron/releases/[0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,2}/' \
-  | sed 's|electron/releases/||; s|/$||' | sort -Vu | tail -n1 || true)"
+# desktop app's own update endpoint is the authoritative, machine-readable signal; the website
+# renders later (2026-11-13: homepage still said 3.17.2 after the app had already fetched
+# 3.18.2 from this API). If the newest server release is ahead of it, upstream has not paired
+# it yet - output nothing so CI skips. If no signal can be read at all, skip too (manual
+# dispatch can always build explicitly).
+DESKTOP_API="${ZCL_DESKTOP_API:-https://zcode.z.ai/api/v1/releases/latest}"
+DESKTOP="$(curl -fsSL --max-time 20 "$DESKTOP_API" 2>/dev/null \
+  | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([0-9][^"]*\)".*/\1/p' | head -n1)"
 if [ -z "$DESKTOP" ]; then
-  log "WARN cannot read the desktop release version from $DESKTOP_PAGE - skipping discovery (use manual dispatch if a build is really needed)"
+  DESKTOP_PAGE="${ZCL_DESKTOP_PAGE:-https://zcode.z.ai/}"
+  # Fallback: the download URLs' path segment (electron/releases/<ver>/...). The page is
+  # React-rendered (v<!-- -->3.x.y) so the visible label is split by comments, and bare
+  # 3.x.y greps catch SVG-path noise like 3.33.66.
+  DESKTOP="$(curl -fsSL --max-time 20 -L "$DESKTOP_PAGE" 2>/dev/null \
+    | grep -oE 'electron/releases/[0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,2}/' \
+    | sed 's|electron/releases/||; s|/$||' | sort -Vu | tail -n1 || true)"
+fi
+if [ -z "$DESKTOP" ]; then
+  log "WARN cannot read the desktop release version from $DESKTOP_API - skipping discovery (use manual dispatch if a build is really needed)"
   exit 0
 fi
 if [ "$(printf '%s\n%s\n' "$NEWEST" "$DESKTOP" | sort -V | tail -n1)" = "$NEWEST" ] && [ "$NEWEST" != "$DESKTOP" ]; then
