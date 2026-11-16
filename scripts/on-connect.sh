@@ -27,6 +27,41 @@ log() { echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') $*" >> "$LOG"; }
 exec 9>"$LOCK" || exit 0
 flock -n 9 || exit 0 # a healer is already running for this connect burst
 
+# ---------------------------------------------------------------- egress self-check (optional)
+# A bridged egress NIC sees a new L2 every time the host switches networks (hotspot <-> LAN);
+# the legacy network service one-shots DHCP at boot, and neither it nor dhclient reacts to
+# link events or network switches - the VM keeps its LAN address (SSH keeps working) while
+# route/DNS go stale, and the desktop then reports "Selected connection has no available
+# models" because the remote daemon cannot reach the model API (2026-11-16). Opt in per host
+# with $KIT_DIR/egress.conf:
+#   IF=ens33
+#   PROBE_URL=https://open.bigmodel.cn/api/anthropic
+# Heal = re-DHCP the NIC via sudo -n (needs NOPASSWD for dhclient; without it the exact
+# manual command is logged). Healthy path is one ~ms-scale probe per connect, backgrounded.
+if [ -f "$KIT_DIR/egress.conf" ]; then
+  . "$KIT_DIR/egress.conf"
+  IFACE="${IF:-}"; PROBE="${PROBE_URL:-}"
+  if [ -n "$IFACE" ] && [ -n "$PROBE" ] && [ -d "/sys/class/net/$IFACE" ]; then
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$PROBE" 2>/dev/null || echo 000)"
+    v4="$(/usr/sbin/ip -4 addr show "$IFACE" 2>/dev/null | grep -c 'inet ' || true)"
+    if [ "$code" = "000" ] || [ "${v4:-0}" -eq 0 ]; then
+      estamp="$KIT_DIR/.egress-heal.stamp"
+      if [ ! -f "$stamp" ] || [ -n "$(find "$stamp" -mmin +5 2>/dev/null)" ]; then
+        touch "$stamp" 2>/dev/null || true
+        log "egress check failed (probe=$code addrs=${v4:-0}) - re-DHCP $IFACE"
+        if sudo -n dhclient -r "$IFACE" >>"$LOG" 2>&1; then sleep 1; fi
+        if sudo -n dhclient "$IFACE" >>"$LOG" 2>&1; then
+          sleep 2
+          ncode="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$PROBE" 2>/dev/null || echo 000)"
+          log "egress heal: probe now $ncode, addrs $(/usr/sbin/ip -4 addr show "$IFACE" 2>/dev/null | grep -c 'inet ' || echo 0)"
+        else
+          log "WARN cannot re-DHCP $IFACE (needs sudo NOPASSWD for dhclient); manual: sudo dhclient -r $IFACE && sudo dhclient $IFACE"
+        fi
+      fi
+    fi
+  fi
+fi
+
 current_version() {
   sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$S/current.json" 2>/dev/null | head -n1
 }
