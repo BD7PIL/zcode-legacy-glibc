@@ -40,22 +40,45 @@ flock -n 9 || exit 0 # a healer is already running for this connect burst
 # manual command is logged). Healthy path is one ~ms-scale probe per connect, backgrounded.
 if [ -f "$KIT_DIR/egress.conf" ]; then
   . "$KIT_DIR/egress.conf"
-  IFACE="${IF:-}"; PROBE="${PROBE_URL:-}"
+  IFACE="${IF:-}"; PROBE="${PROBE_URL:-}"; NEUTRAL="${NEUTRAL_URL:-http://connect.rom.miui.com/generate_204}"
   if [ -n "$IFACE" ] && [ -n "$PROBE" ] && [ -d "/sys/class/net/$IFACE" ]; then
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$PROBE" 2>/dev/null || echo 000)"
-    v4="$(/usr/sbin/ip -4 addr show "$IFACE" 2>/dev/null | grep -c 'inet ' || true)"
-    if [ "$code" = "000" ] || [ "${v4:-0}" -eq 0 ]; then
-      estamp="$KIT_DIR/.egress-heal.stamp"
-      if [ ! -f "$stamp" ] || [ -n "$(find "$stamp" -mmin +5 2>/dev/null)" ]; then
-        touch "$stamp" 2>/dev/null || true
-        log "egress check failed (probe=$code addrs=${v4:-0}) - re-DHCP $IFACE"
-        if sudo -n dhclient -r "$IFACE" >>"$LOG" 2>&1; then sleep 1; fi
-        if sudo -n dhclient "$IFACE" >>"$LOG" 2>&1; then
-          sleep 2
-          ncode="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$PROBE" 2>/dev/null || echo 000)"
-          log "egress heal: probe now $ncode, addrs $(/usr/sbin/ip -4 addr show "$IFACE" 2>/dev/null | grep -c 'inet ' || echo 0)"
-        else
-          log "WARN cannot re-DHCP $IFACE (needs sudo NOPASSWD for dhclient); manual: sudo dhclient -r $IFACE && sudo dhclient $IFACE"
+    if [ "$code" != "000" ]; then
+      rm -f "$KIT_DIR/.egress-heal.state" 2>/dev/null || true # healthy - reset backoff
+    else
+      # The API endpoint being down does not mean the NIC is down (it may just be the API);
+      # only touch a link that is unusable for everything - the neutral probe guards against
+      # re-DHCPing a healthy lease for nothing.
+      ncode="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$NEUTRAL" 2>/dev/null || echo 000)"
+      if [ "$ncode" != "000" ]; then
+        log "egress probe $code but neutral probe $ncode - API-side issue, NIC untouched"
+      else
+        # Pull-based and throttled: this hook has no daemon or cron - it runs only when an
+        # inbound SSH connect wakes it, and the state file widens the retry gap after
+        # consecutive failed heals (5min -> 30min at 3 fails) so a long-offline host sees a
+        # bounded number of attempts, never a loop.
+        state="$KIT_DIR/.egress-heal.state"
+        now="$(date +%s)"; last=0; fails=0
+        if [ -f "$state" ]; then
+          last="$(cut -d' ' -f1 "$state" 2>/dev/null)"; fails="$(cut -d' ' -f2 "$state" 2>/dev/null)"
+        fi
+        case "${last:-0}" in ''|*[!0-9]*) last=0 ;; esac
+        case "${fails:-0}" in ''|*[!0-9]*) fails=0 ;; esac
+        if [ "$fails" -ge 3 ]; then gap=1800; else gap=300; fi
+        if [ $((now - last)) -ge "$gap" ]; then
+          printf '%s %s\n' "$now" "$((fails + 1))" > "$state" 2>/dev/null || true
+          v4="$(/usr/sbin/ip -4 addr show "$IFACE" 2>/dev/null | grep -c 'inet ' || true)"
+          log "egress dead (api=$code neutral=$ncode addrs=${v4:-0}, attempt $((fails + 1))) - re-DHCP $IFACE"
+          if sudo -n dhclient -r "$IFACE" >>"$LOG" 2>&1; then sleep 1; fi
+          sudo -n dhclient "$IFACE" >>"$LOG" 2>&1
+          sleep 3
+          ncode="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$NEUTRAL" 2>/dev/null || echo 000)"
+          if [ "$ncode" != "000" ]; then
+            rm -f "$state" 2>/dev/null || true
+            log "egress heal: neutral probe $ncode - backoff reset"
+          else
+            log "egress heal incomplete: neutral still 000 - next attempt backs off"
+          fi
         fi
       fi
     fi
