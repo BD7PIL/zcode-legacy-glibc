@@ -42,14 +42,16 @@ if [ -f "$KIT_DIR/egress.conf" ]; then
   . "$KIT_DIR/egress.conf"
   IFACE="${IF:-}"; PROBE="${PROBE_URL:-}"; NEUTRAL="${NEUTRAL_URL:-http://connect.rom.miui.com/generate_204}"
   if [ -n "$IFACE" ] && [ -n "$PROBE" ] && [ -d "/sys/class/net/$IFACE" ]; then
-    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$PROBE" 2>/dev/null || echo 000)"
+    # curl -w '%{http_code}' ALWAYS prints the code (000 on failure) - do not add an
+    # `|| echo 000` here or the failure case doubles into "000000" and reads as healthy.
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$PROBE" 2>/dev/null)"
     if [ "$code" != "000" ]; then
       rm -f "$KIT_DIR/.egress-heal.state" 2>/dev/null || true # healthy - reset backoff
     else
       # The API endpoint being down does not mean the NIC is down (it may just be the API);
       # only touch a link that is unusable for everything - the neutral probe guards against
       # re-DHCPing a healthy lease for nothing.
-      ncode="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$NEUTRAL" 2>/dev/null || echo 000)"
+      ncode="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$NEUTRAL" 2>/dev/null)"
       if [ "$ncode" != "000" ]; then
         log "egress probe $code but neutral probe $ncode - API-side issue, NIC untouched"
       else
@@ -72,7 +74,7 @@ if [ -f "$KIT_DIR/egress.conf" ]; then
           if sudo -n dhclient -r "$IFACE" >>"$LOG" 2>&1; then sleep 1; fi
           sudo -n dhclient "$IFACE" >>"$LOG" 2>&1
           sleep 3
-          ncode="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$NEUTRAL" 2>/dev/null || echo 000)"
+          ncode="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$NEUTRAL" 2>/dev/null)"
           if [ "$ncode" != "000" ]; then
             rm -f "$state" 2>/dev/null || true
             log "egress heal: neutral probe $ncode - backoff reset"
