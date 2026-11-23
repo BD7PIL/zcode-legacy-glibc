@@ -4,8 +4,11 @@
 #
 # The ZCode CDN exposes one manifest per desktop version - `<CDN>/<ver>/source-server-release.json` -
 # and no "latest" endpoint, so discovery probes forward from a known version and stops at a
-# bounded horizon (~same-minor patches, three minors, a major). For the newest hit it downloads
-# the archive and reads the real component versions out of it - never guesses.
+# bounded horizon (~same-minor patches, three minors, a major). For the newest hit that the
+# desktop train has paired with it downloads the archive and reads the real component versions
+# out of it - never guesses. The CDN can carry releases AHEAD of the desktop (2026-11-23:
+# 4.0.0 sat there while the desktop train was 3.19.1); taking the max and skipping everything
+# stranded the paired 3.19.1 - so the max is only an upper bound, the newest PAIRED hit builds.
 #
 # Usage: discover-source-server.sh [--from VER] [--max-probes N]
 #
@@ -75,27 +78,25 @@ fetch_code() {  # path -> HTTP code (first CDN that answers)
   echo 000
 }
 
-NEWEST=""
+HITS=""
 while IFS= read -r v; do
   [ -n "$v" ] || continue
   code="$(fetch_code "$v/source-server-release.json")"
   if [ "$code" = "200" ]; then
     log "hit: $v"
-    NEWEST="$v"
+    HITS+="$v"$'\n'
   fi
 done <<<"$CANDIDATES"
 
-[ -n "$NEWEST" ] || { log "no source-server release newer than $LAST"; exit 0; }
-log "newest source-server release: $NEWEST"
+[ -n "$HITS" ] || { log "no source-server release newer than $LAST"; exit 0; }
 
 # Pairing guard: the desktop pairs with the remote server running the DESKTOP's own release,
 # and the desktop app train can lag the source-server CDN (3.18.0 shipped on the CDN while the
 # desktop page still served 3.17.2; the desktop refuses a newer remote - 2026-11-11). The
 # desktop app's own update endpoint is the authoritative, machine-readable signal; the website
 # renders later (2026-11-13: homepage still said 3.17.2 after the app had already fetched
-# 3.18.2 from this API). If the newest server release is ahead of it, upstream has not paired
-# it yet - output nothing so CI skips. If no signal can be read at all, skip too (manual
-# dispatch can always build explicitly).
+# 3.18.2 from this API). If no signal can be read at all, skip (manual dispatch can always
+# build explicitly).
 DESKTOP_API="${ZCL_DESKTOP_API:-https://zcode.z.ai/api/v1/releases/latest}"
 DESKTOP="$(curl -fsSL --max-time 20 "$DESKTOP_API" 2>/dev/null \
   | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([0-9][^"]*\)".*/\1/p' | head -n1)"
@@ -112,11 +113,25 @@ if [ -z "$DESKTOP" ]; then
   log "WARN cannot read the desktop release version from $DESKTOP_API - skipping discovery (use manual dispatch if a build is really needed)"
   exit 0
 fi
-if [ "$(printf '%s\n%s\n' "$NEWEST" "$DESKTOP" | sort -V | tail -n1)" = "$NEWEST" ] && [ "$NEWEST" != "$DESKTOP" ]; then
-  log "source-server $NEWEST is ahead of the desktop release $DESKTOP - upstream has not paired it; skipping"
+
+# Build the newest hit NOT ahead of the desktop train - not the CDN max. Releases the desktop
+# has not paired yet (2026-11-23: 4.0.0 on the CDN, desktop train 3.19.1) must not veto the
+# paired ones below them.
+NEWEST=""
+while IFS= read -r v; do
+  [ -n "$v" ] || continue
+  if [ "$v" = "$DESKTOP" ] || [ "$(printf '%s\n%s\n' "$v" "$DESKTOP" | sort -V | tail -n1)" = "$DESKTOP" ]; then
+    NEWEST="$v" # hits are walked newest-first: first not-ahead is the one
+    break
+  fi
+  log "note: source-server $v sits on the CDN ahead of desktop $DESKTOP - unpaired, not buildable"
+done <<<"$(sort -Vru <<<"$HITS")"
+
+if [ -z "$NEWEST" ]; then
+  log "no source-server release newer than $LAST is paired with desktop $DESKTOP - skipping"
   exit 0
 fi
-log "desktop release: $DESKTOP - server $NEWEST is paired"
+log "newest paired source-server release: $NEWEST (desktop $DESKTOP)"
 
 # --------------------------------------------------------------------------- read real component versions
 ARCHIVE_NAME="zcode-server-linux-x64.tar.gz"
