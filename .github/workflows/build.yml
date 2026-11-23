@@ -3,7 +3,8 @@ name: Build legacy runtime bundle
 # One workflow, octg-style: an hourly detect job reads the upstream truth (the ZCode source-server
 # release CDN - there is no "latest" endpoint, so it probes forward from the newest version this
 # repo has built), and a Release tag is the build identity: if the tag exists, the whole chain
-# skips. Manual dispatch pins the versions explicitly and bypasses discovery.
+# skips. Manual dispatch pins the versions explicitly and bypasses discovery; leaving
+# zcode_version empty (the default) dispatches the discovery path.
 #
 # Hourly, not 6-hourly: the desktop auto-updates whenever upstream ships and then REFUSES the
 # older remote, so the gap between a desktop release and a build is a live outage for every
@@ -16,9 +17,13 @@ on:
   workflow_dispatch:
     inputs:
       zcode_version:
-        description: 'ZCode desktop / source-server version (e.g. 3.16.3) - set to bypass discovery'
+        # Empty default = bare or gh -f zcode_version= dispatches take the discovery path.
+        # GitHub refills an empty/missing input with this default, which is why the old
+        # '3.16.3' default made every lazy dispatch pin 3.16.3 and skip as "already exists"
+        # (2026-11-23: that ate the 3.19.1 build while 4.0.0 on the CDN ate the hourly ones).
+        description: 'ZCode desktop / source-server version - leave EMPTY to auto-discover'
         required: false
-        default: '3.16.3'
+        default: ''
       node_version:
         description: 'node-runtime version the release manifest declares (without leading v)'
         required: false
